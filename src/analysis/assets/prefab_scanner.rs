@@ -1,0 +1,76 @@
+use crate::report::{Finding, Severity};
+use crate::utils::patterns::BASE64_LONG;
+
+/// Scan a Unity .prefab or .asset file (YAML or binary) for anomalies.
+pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    let content = String::from_utf8_lossy(data);
+    let is_yaml = content.starts_with("%YAML");
+
+    if is_yaml {
+        findings.append(&mut analyze_yaml(&content, location));
+    } else {
+        // Binary serialized — limited analysis
+        let text = String::from_utf8_lossy(data);
+        // Look for GUID-like strings referencing external assets
+        let guid_refs: Vec<_> = text.match_indices("guid: ").collect();
+        if guid_refs.len() > 100 {
+            findings.push(Finding::new(
+                "PREFAB_EXCESSIVE_GUIDS",
+                Severity::Low,
+                5,
+                location,
+                "Binary prefab has an unusually large number of GUID references",
+            ).with_context(format!("count={}", guid_refs.len())));
+        }
+    }
+
+    findings
+}
+
+fn analyze_yaml(content: &str, location: &str) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    // Check for external references (externalVersions / externalObjects)
+    if content.contains("externalObjects:") && !content.contains("externalObjects: {}") {
+        findings.push(Finding::new(
+            "META_EXTERNAL_REF",
+            Severity::Medium,
+            25,
+            location,
+            "Prefab/asset references external objects not included in the package",
+        ));
+    }
+
+    // Scan for long Base64 fields
+    for m in BASE64_LONG.find_iter(content) {
+        if m.len() > 200 {
+            findings.push(Finding::new(
+                "PREFAB_INLINE_B64",
+                Severity::Low,
+                8,
+                location,
+                "Long Base64-encoded field in YAML prefab/asset (may be inline texture or payload)",
+            ).with_context(format!("length={}", m.len())));
+            break; // report once per file
+        }
+    }
+
+    // Check for script GUIDs without match (can't resolve here — mark for metadata stage)
+    // Look for unknown component types
+    if content.contains("m_Script:") {
+        let script_count = content.matches("m_Script:").count();
+        if script_count > 20 {
+            findings.push(Finding::new(
+                "PREFAB_MANY_SCRIPTS",
+                Severity::Low,
+                5,
+                location,
+                "Prefab references an unusually large number of scripts",
+            ).with_context(format!("count={script_count}")));
+        }
+    }
+
+    findings
+}

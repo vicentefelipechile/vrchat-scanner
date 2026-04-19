@@ -1,0 +1,78 @@
+[package]
+name = "vrcstorage-scanner"
+version = "0.1.0"
+edition = "2021"
+description = "Static analysis scanner for Unity/VRChat packages"
+authors = ["VRCStorage Team"]
+
+[[bin]]
+name = "vrcstorage-scanner"
+path = "src/main.rs"
+
+[lib]
+name = "vrcstorage_scanner"
+path = "src/lib.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Extracción de archivos
+zip = "0.6"
+tar = "0.4"
+flate2 = "1.0"
+
+# Análisis PE / DLL
+goblin = "0.8"
+
+# YAML (para .meta y .prefab)
+serde_yaml = "0.9"
+serde = { version = "1", features = ["derive"] }
+
+# JSON para reporte
+serde_json = "1"
+
+# Hashing
+sha2 = "0.10"
+md-5 = "0.10"
+sha1 = "0.10"
+hex = "0.4"
+
+# Digest trait
+digest = "0.10"
+
+# Regex para patterns en scripts
+regex = "1"
+lazy_static = "1"
+
+# Paralelismo
+rayon = "1"
+
+# Entropía y operaciones sobre bytes
+byteorder = "1"
+
+# Manejo de errores
+thiserror = "1"
+anyhow = "1"
+
+# Output coloreado
+colored = "2"
+indicatif = "0.17"
+
+# Timestamps
+chrono = { version = "0.4", features = ["serde"] }
+
+# HTTP server (modo serve para Cloudflare Containers)
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+reqwest = { version = "0.12", features = ["stream", "json"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["trace"] }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3"
+
+[[bench]]
+name = "scan_performance"
+harness = false
