@@ -1,13 +1,13 @@
-/// Terminal capability detection.
-///
-/// Windows 10's legacy console host (conhost.exe) does not process ANSI escape
-/// sequences or render Unicode box-drawing characters unless Virtual Terminal
-/// Processing (VTP) is explicitly enabled via SetConsoleMode.  Windows Terminal
-/// (WT_SESSION) and modern terminal emulators enable it automatically.
-///
-/// This module checks the environment and, on Windows, attempts to enable VTP.
-/// If VTP is unavailable the caller should disable colored output and fall back
-/// to plain ASCII separators.
+//! Terminal capability detection.
+//!
+//! Windows 10's legacy console host (conhost.exe) does not process ANSI escape
+//! sequences or render Unicode box-drawing characters unless Virtual Terminal
+//! Processing (VTP) is explicitly enabled via SetConsoleMode.  Windows Terminal
+//! (WT_SESSION) and modern terminal emulators enable it automatically.
+//!
+//! This module checks the environment and, on Windows, attempts to enable VTP.
+//! If VTP is unavailable the caller should disable colored output and fall back
+//! to plain ASCII separators.
 
 /// The set of capabilities we detected at startup.
 #[derive(Debug, Clone, Copy)]

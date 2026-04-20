@@ -32,19 +32,13 @@ pub fn print_report(report: &ScanReport, level: RiskLevel, verbose: bool, caps: 
     // ── Asset statistics ──────────────────────────────────────
     let c = &report.assets_analyzed;
     println!(
-        "\n{} {}  {} {}  {} {}  {} {}  {} {}  {} {}",
-        "Assets:".bold(),
-        format!("total={}", c.total),
-        "|" .dimmed(),
-        format!("scripts={}", c.scripts),
-        "|" .dimmed(),
-        format!("dlls={}", c.dlls),
-        "|" .dimmed(),
-        format!("textures={}", c.textures),
-        "|" .dimmed(),
-        format!("audio={}", c.audio),
-        "|" .dimmed(),
-        format!("prefabs={}", c.prefabs),
+        "\n{} total={}  {} scripts={}  {} dlls={}  {} textures={}  {} audio={}  {} prefabs={}",
+        "Assets:".bold(), c.total,
+        "|".dimmed(), c.scripts,
+        "|".dimmed(), c.dlls,
+        "|".dimmed(), c.textures,
+        "|".dimmed(), c.audio,
+        "|".dimmed(), c.prefabs,
     );
 
     // ── Findings ──────────────────────────────────────────────
