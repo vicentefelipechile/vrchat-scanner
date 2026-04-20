@@ -25,7 +25,7 @@
 /// | Forbidden extensions | `FORBIDDEN_EXTENSIONS` |
 /// | Domain whitelist | `SAFE_DOMAINS` |
 
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 // 1. RISK SCORE BANDS
 //
 // These four boundaries define the five risk levels.  Every scanned package
@@ -39,7 +39,7 @@
 //
 // Raise a boundary to make the scanner more permissive at that level.
 // Lower it to be stricter.
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 
 /// Upper bound (inclusive) for the **Clean** risk band.
 /// Packages at or below this score are considered safe and can be auto-published.
@@ -59,7 +59,7 @@ pub const SCORE_HIGH_MAX: u32 = 150;
 
 // Scores above SCORE_HIGH_MAX → Critical (reject).
 
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 // 2. PER-FINDING RISK POINTS
 //
 // Each constant is the number of risk points added when the corresponding
@@ -75,9 +75,11 @@ pub const SCORE_HIGH_MAX: u32 = 150;
 //
 // If you raise a value, add a comment explaining why you believe the signal is
 // more dangerous than previously thought.
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 
-// ── Structural / path ─────────────────────────────────────────────────────────
+// =============================================================================
+// Structural / path
+// =============================================================================
 
 /// `ForbiddenExtension` — Executable file type (.exe, .bat, .ps1, …) inside
 /// the package.  No legitimate Unity content should ever ship a standalone
@@ -92,7 +94,9 @@ pub const PTS_PATH_TRAVERSAL: u32 = 85;
 /// a classic disguise technique.
 pub const PTS_DOUBLE_EXTENSION: u32 = 50;
 
-// ── C# script — critical ──────────────────────────────────────────────────
+// =============================================================================
+// C# script — critical
+// =============================================================================
 
 /// `CsAssemblyLoadBytes` — `Assembly.Load(bytes)` call detected.
 /// Loading a .NET assembly from raw bytes hides the payload from file scanners.
@@ -106,7 +110,9 @@ pub const PTS_CS_ASSEMBLY_LOAD_FILE: u32 = 60;
 /// No legitimate VRChat/Unity content ever needs to launch an external process.
 pub const PTS_CS_PROCESS_START: u32 = 75;
 
-// ── C# script — high ─────────────────────────────────────────────────────
+// =============================================================================
+// C# script — high
+// =============================================================================
 
 /// `CsFileWrite` — File write, move, copy, or delete operations in C#.
 /// Legitimate VRChat content has no reason to touch the host filesystem.
@@ -140,7 +146,9 @@ pub const PTS_CS_IP_HARDCODED: u32 = 50;
 /// Used by obfuscators to disguise API calls and keywords.
 pub const PTS_CS_UNICODE_ESCAPES: u32 = 30;
 
-// ── C# script — medium ───────────────────────────────────────────────────
+// =============================================================================
+// C# script — medium
+// =============================================================================
 
 /// `CsReflectionEmit` — `System.Reflection.Emit` / `ILGenerator` detected.
 /// Used to compile and run code at runtime; the real logic may never be on disk.
@@ -176,7 +184,9 @@ pub const PTS_CS_BASE64_HIGH_RATIO: u32 = 25;
 /// Classic string or shellcode decryption technique.
 pub const PTS_CS_XOR_DECRYPTION: u32 = 20;
 
-// ── C# script — low ──────────────────────────────────────────────────────
+// =============================================================================
+// C# script — low
+// =============================================================================
 
 /// `CsObfuscatedIdentifiers` — Very high density of 1-2 character identifiers.
 /// Obfuscation tools rename all symbols to meaningless short names.
@@ -187,7 +197,9 @@ pub const PTS_CS_OBFUSCATED_IDENTIFIERS: u32 = 15;
 /// was injected outside Unity's normal workflow.
 pub const PTS_CS_NO_META: u32 = 10;
 
-// ── PE / DLL binary ──────────────────────────────────────────────────────
+// =============================================================================
+// PE / DLL binary
+// =============================================================================
 
 /// `PeHighEntropySection` (High variant, entropy ≥ `ENTROPY_PE_HIGH`).
 /// Very high section entropy almost always means the section is packed or encrypted.
@@ -215,7 +227,9 @@ pub const PTS_PE_INVALID_HEADER: u32 = 15;
 /// `PeParseError` — PE file could not be parsed.
 pub const PTS_PE_PARSE_ERROR: u32 = 5;
 
-// ── Import table (DLL) ───────────────────────────────────────────────────
+// =============================================================================
+// Import table (DLL)
+// =============================================================================
 
 /// `DllImportCreateprocess` — CreateProcess / ShellExecute / WinExec imported.
 /// Enables launching arbitrary executables.  Treated as Critical in PE analysis.
@@ -264,7 +278,9 @@ pub const PTS_DLL_IMPORT_CRYPTO: u32 = 20;
 /// Often used for victim fingerprinting.
 pub const PTS_DLL_IMPORT_SYSINFO: u32 = 8;
 
-// ── DLL string analysis ──────────────────────────────────────────────────
+// =============================================================================
+// DLL string analysis
+// =============================================================================
 
 /// `DllStringsSuspiciousPath` — System paths embedded in DLL string constants.
 pub const PTS_DLL_STRINGS_SUSPICIOUS_PATH: u32 = 12;
@@ -275,7 +291,9 @@ pub const PTS_DLL_URL_UNKNOWN_DOMAIN: u32 = 50;
 /// Hardcoded IP address found in DLL string constants.
 pub const PTS_DLL_IP_HARDCODED: u32 = 50;
 
-// ── Asset scanners ───────────────────────────────────────────────────────
+// =============================================================================
+// Asset scanners
+// =============================================================================
 
 /// `MagicMismatch` — File's actual format does not match its declared extension.
 pub const PTS_MAGIC_MISMATCH: u32 = 50;
@@ -291,7 +309,9 @@ pub const PTS_AUDIO_UNUSUAL_ENTROPY: u32 = 8;
 /// Score may be reduced to `REDUCE_POLYGLOT_NO_LOADER` when no loader script exists.
 pub const PTS_POLYGLOT_FILE: u32 = 70;
 
-// ── Metadata ─────────────────────────────────────────────────────────────
+// =============================================================================
+// Metadata
+// =============================================================================
 
 /// `MetaExternalRef` — .meta file references assets not included in the package.
 pub const PTS_META_EXTERNAL_REF: u32 = 25;
@@ -300,7 +320,9 @@ pub const PTS_META_EXTERNAL_REF: u32 = 25;
 /// Possible tampering or crafting outside Unity.
 pub const PTS_META_FUTURE_TIMESTAMP: u32 = 20;
 
-// ── Prefab / ScriptableObject ─────────────────────────────────────────────
+// =============================================================================
+// Prefab / ScriptableObject
+// =============================================================================
 
 /// `PrefabInlineB64` — Long inline Base64 field inside a YAML prefab.
 pub const PTS_PREFAB_INLINE_B64: u32 = 8;
@@ -311,7 +333,9 @@ pub const PTS_PREFAB_EXCESSIVE_GUIDS: u32 = 5;
 /// `PrefabManyScripts` — Prefab references an unusually large number of scripts.
 pub const PTS_PREFAB_MANY_SCRIPTS: u32 = 5;
 
-// ── Package-level ─────────────────────────────────────────────────────────
+// =============================================================================
+// Package-level
+// =============================================================================
 
 /// `DllOutsidePlugins` — DLL found outside `Assets/Plugins/`.
 /// Score is zeroed if the DLL is a managed .NET assembly (see `REDUCE_DLL_MANAGED`).
@@ -324,7 +348,7 @@ pub const PTS_DLL_MANY_DEPENDENTS: u32 = 15;
 /// `ExcessiveDlls` — Package ships more than `THRESHOLD_EXCESSIVE_DLLS` DLLs.
 pub const PTS_EXCESSIVE_DLLS: u32 = 15;
 
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 // 3. CONTEXT SCORE REDUCTIONS
 //
 // When context makes a finding less dangerous, its points are *reduced* (not
@@ -333,7 +357,7 @@ pub const PTS_EXCESSIVE_DLLS: u32 = 15;
 // Rules enforced by AGENTS.md:
 //   • Reductions never apply to findings with `Severity::Critical`.
 //   • They only mutate `finding.points`; `finding.severity` is immutable.
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 
 /// `CsHttpClient` when `has_vrchat_sdk == true`.
 /// `UnityWebRequest` is normal in VRChat SDK scripts (avatar upload, world data).
@@ -357,7 +381,7 @@ pub const REDUCE_POLYGLOT_NO_LOADER: u32 = 15;
 // Zero is the hard-coded intent (the finding becomes irrelevant) so no named
 // constant is needed.
 
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 // 4. ENTROPY THRESHOLDS
 //
 // Shannon entropy is a measure of data randomness on a scale of 0.0 (all bytes
@@ -369,7 +393,7 @@ pub const REDUCE_POLYGLOT_NO_LOADER: u32 = 15;
 // Natively compressed formats (PNG, JPEG, OGG, MP3, …) also have high entropy
 // because their compression algorithms push data towards randomness.  The
 // scanners explicitly skip those formats for the entropy check.
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 
 /// PE section entropy at or above this value triggers a **High** finding.
 /// Values >= 7.2 are almost always the result of packing or encryption.
@@ -394,9 +418,9 @@ pub const ENTROPY_AUDIO_MIN: f64 = 5.0;
 /// their compression codec raises entropy naturally above 7.5.
 pub const ENTROPY_AUDIO_MAX: f64 = 7.9;
 
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 // 5. PACKAGE-LEVEL THRESHOLDS
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 
 /// A package containing more DLLs than this triggers `ExcessiveDlls`.
 /// More DLLs mean more attack surface and more code the scanner must review.
@@ -426,9 +450,9 @@ pub const PE_INFLATED_RATIO: u64 = 4;
 /// string analysis.  Shorter strings produce too many false positives.
 pub const DLL_MIN_STRING_LEN: usize = 6;
 
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 // 6. OBFUSCATION DETECTION
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 
 /// Base64 character ratio above which `CsBase64HighRatio` fires.
 /// If more than this fraction of the script's total characters belong to
@@ -451,7 +475,7 @@ pub const OBFUSC_MIN_TOKENS: usize = 50;
 /// Value: 0.4 = 40 % of all alphanumeric tokens are very short.
 pub const OBFUSC_SHORT_IDENT_RATIO: f64 = 0.4;
 
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 // 7. FORBIDDEN EXTENSIONS
 //
 // Files with any of these extensions inside a Unity package are **always**
@@ -460,7 +484,7 @@ pub const OBFUSC_SHORT_IDENT_RATIO: f64 = 0.4;
 // To add a new extension, append it to the slice (lowercase, without the dot).
 // To remove a false-positive trigger for a specific extension, delete it here
 // and describe the rationale in your PR.
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 
 /// File extensions that are never legitimate inside a Unity/VRChat package.
 /// Matched case-insensitively against the asset's on-disk extension.
@@ -479,7 +503,7 @@ pub const FORBIDDEN_EXTENSIONS: &[&str] = &[
     "pif", // Program Information File (executable shortcut)
 ];
 
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 // 8. DOMAIN WHITELIST
 //
 // URLs pointing to domains on this list do NOT produce a `CsUrlUnknownDomain`
@@ -495,7 +519,7 @@ pub const FORBIDDEN_EXTENSIONS: &[&str] = &[
 //
 // To add a domain, append it to the slice and explain in your PR why it is safe.
 // To remove a domain, delete it and describe what changed.
-// ─────────────────────────────────────────────────────────────────────────────
+// =============================================================================
 
 /// Domains whose URLs are treated as safe (no URL finding emitted).
 pub const SAFE_DOMAINS: &[&str] = &[

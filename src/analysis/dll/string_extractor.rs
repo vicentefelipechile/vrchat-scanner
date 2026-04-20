@@ -1,3 +1,8 @@
+use crate::config::{
+    PTS_CS_SHELL_STRINGS, PTS_DLL_STRINGS_SUSPICIOUS_PATH, PTS_DLL_IMPORT_REGISTRY,
+    PTS_DLL_URL_UNKNOWN_DOMAIN, PTS_DLL_IP_HARDCODED, PTS_POLYGLOT_FILE,
+    PTS_CS_BASE64_HIGH_RATIO, DLL_MIN_STRING_LEN,
+};
 use crate::report::{Finding, FindingId, Severity};
 use crate::utils::patterns::{URL_PATTERN, IP_PATTERN, REGISTRY_KEY, SYSTEM_PATH, SHELL_CMD, BASE64_LONG, is_safe_domain};
 
@@ -25,7 +30,7 @@ fn extract_ascii_strings(data: &[u8], min_len: usize) -> Vec<String> {
 /// Classify strings found in a DLL and return findings
 pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
-    let strings = extract_ascii_strings(data, 6);
+    let strings = extract_ascii_strings(data, DLL_MIN_STRING_LEN);
 
     let mut found_shell_cmd = false;
     let mut found_sys_path = false;
@@ -38,7 +43,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
                 Finding::new(
                     FindingId::CsShellStrings,
                     Severity::High,
-                    45,
+                    PTS_CS_SHELL_STRINGS,
                     location,
                     "Shell command string found in DLL",
                 )
@@ -53,7 +58,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
                 Finding::new(
                     FindingId::DllStringsSuspiciousPath,
                     Severity::Low,
-                    12,
+                    PTS_DLL_STRINGS_SUSPICIOUS_PATH,
                     location,
                     "Suspicious system path embedded in DLL strings",
                 )
@@ -68,7 +73,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
                 Finding::new(
                     FindingId::DllImportRegistry,
                     Severity::Medium,
-                    25,
+                    PTS_DLL_IMPORT_REGISTRY,
                     location,
                     "Windows registry path embedded in DLL strings",
                 )
@@ -81,7 +86,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
             let url = cap.as_str();
             if !is_safe_domain(url) {
                 findings.push(
-                    Finding::new(FindingId::CsUrlUnknownDomain, Severity::High, 50, location, "URL to unrecognized domain in DLL strings")
+                    Finding::new(FindingId::CsUrlUnknownDomain, Severity::High, PTS_DLL_URL_UNKNOWN_DOMAIN, location, "URL to unrecognized domain in DLL strings")
                         .with_context(url.chars().take(120).collect::<String>()),
                 );
             }
@@ -90,7 +95,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         // IP addresses
         if IP_PATTERN.is_match(s) && !s.starts_with("127.") && !s.starts_with("0.0.") {
             findings.push(
-                Finding::new(FindingId::CsIpHardcoded, Severity::High, 50, location, "Hardcoded IP address in DLL strings")
+                Finding::new(FindingId::CsIpHardcoded, Severity::High, PTS_DLL_IP_HARDCODED, location, "Hardcoded IP address in DLL strings")
                     .with_context(s.chars().take(40).collect::<String>()),
             );
         }
@@ -100,7 +105,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
             findings.push(Finding::new(
                 FindingId::PolyglotFile,
                 Severity::High,
-                70,
+                PTS_POLYGLOT_FILE,
                 location,
                 "Hex-encoded PE header (4D5A) found in DLL strings — possible embedded executable",
             ));
@@ -110,7 +115,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         // Long Base64
         if BASE64_LONG.is_match(s) {
             findings.push(
-                Finding::new(FindingId::CsBase64HighRatio, Severity::Medium, 25, location, "Long Base64 string in DLL")
+                Finding::new(FindingId::CsBase64HighRatio, Severity::Medium, PTS_CS_BASE64_HIGH_RATIO, location, "Long Base64 string in DLL")
                     .with_context(format!("length={}", s.len())),
             );
         }

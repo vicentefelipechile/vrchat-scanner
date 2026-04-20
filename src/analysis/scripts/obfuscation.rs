@@ -1,3 +1,7 @@
+use crate::config::{
+    PTS_CS_BASE64_HIGH_RATIO, PTS_CS_XOR_DECRYPTION, PTS_CS_OBFUSCATED_IDENTIFIERS,
+    PTS_CS_UNICODE_ESCAPES, OBFUSC_BASE64_RATIO, OBFUSC_MIN_TOKENS, OBFUSC_SHORT_IDENT_RATIO,
+};
 use crate::report::{Finding, FindingId, Severity};
 use crate::utils::patterns::BASE64_LONG;
 
@@ -10,12 +14,12 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
     let total_chars = source.len() as f64;
     let base64_chars: f64 = base64_matches.iter().map(|m| m.len() as f64).sum();
 
-    if total_chars > 0.0 && (base64_chars / total_chars) > 0.15 {
+    if total_chars > 0.0 && (base64_chars / total_chars) > OBFUSC_BASE64_RATIO {
         findings.push(
             Finding::new(
                 FindingId::CsBase64HighRatio,
                 Severity::Medium,
-                25,
+                PTS_CS_BASE64_HIGH_RATIO,
                 location,
                 "High ratio of Base64 strings in C# script (>15% of content)",
             )
@@ -29,7 +33,7 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         findings.push(Finding::new(
             FindingId::CsBase64HighRatio,
             Severity::Medium,
-            15,
+            PTS_CS_BASE64_HIGH_RATIO / 2, // half points for the single-string variant
             location,
             "Long Base64 literal (>200 chars) in C# script",
         ));
@@ -45,12 +49,12 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
     if !tokens.is_empty() {
         let short_count = tokens.iter().filter(|t| t.len() <= 2 && t.chars().all(|c| c.is_alphabetic())).count();
         let ratio = short_count as f64 / tokens.len() as f64;
-        if ratio > 0.4 && tokens.len() > 50 {
+        if ratio > OBFUSC_SHORT_IDENT_RATIO && tokens.len() > OBFUSC_MIN_TOKENS {
             findings.push(
                 Finding::new(
                     FindingId::CsObfuscatedIdentifiers,
                     Severity::Low,
-                    15,
+                    PTS_CS_OBFUSCATED_IDENTIFIERS,
                     location,
                     "High density of very short identifiers (possible obfuscation)",
                 )
@@ -71,7 +75,7 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
             findings.push(Finding::new(
                 FindingId::CsXorDecryption,
                 Severity::Medium,
-                20,
+                PTS_CS_XOR_DECRYPTION,
                 location,
                 "XOR operation on byte array detected (possible string/code decryption)",
             ));
@@ -83,7 +87,7 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         findings.push(Finding::new(
             FindingId::CsUnicodeEscapes,
             Severity::High,
-            30,
+            PTS_CS_UNICODE_ESCAPES,
             location,
             "Unicode escape sequences in C# source (possible obfuscation of keywords/APIs)",
         ));
