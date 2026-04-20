@@ -1,0 +1,182 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'   # v1.0.0, v1.2.3, etc.
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: vrcstorage-scanner
+
+jobs:
+  # === Build matrix: Windows + Linux ========================================
+  build:
+    name: Build — ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows 64-bit (native MSVC)
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: vrcstorage-scanner-windows-x86_64.exe
+            binary: vrcstorage-scanner.exe
+
+          # Linux 64-bit (glibc — compatible with most distros)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: vrcstorage-scanner-linux-x86_64
+            binary: vrcstorage-scanner
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Copy binary to artifact name
+        shell: bash
+        run: |
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "${{ matrix.artifact }}"
+
+      - name: Compute SHA-256 checksum
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
+          else
+            sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
+          fi
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}
+            ${{ matrix.artifact }}.sha256
+          retention-days: 1
+
+  # === Create GitHub Release with all binaries ==============================
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to create releases
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history for release notes
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: List assets to upload
+        run: ls -lh dist/
+
+      - name: Create release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          # Auto-generate notes from merged PRs and commits since last tag
+          generate_release_notes: true
+          # Pre-release if tag includes "-beta", "-rc", etc.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: dist/**
+          body: |
+            ## 📦 Assets
+
+            | File | Platform |
+            |---|---|
+            | `vrcstorage-scanner-windows-x86_64.exe` | Windows 10/11 (64-bit) |
+            | `vrcstorage-scanner-linux-x86_64` | Linux x86_64 (glibc ≥ 2.17) |
+
+            > **Verify integrity:** each binary ships with a `.sha256` checksum file.
+            > ```
+            > sha256sum -c vrcstorage-scanner-linux-x86_64.sha256
+            > ```
+
+  # === Discord notification ==================================================
+  notify-discord:
+    name: Notify Discord
+    needs: release
+    runs-on: ubuntu-latest
+    # Only run if DISCORD_WEBHOOK_URL secret is configured
+    if: ${{ vars.DISCORD_NOTIFY == 'true' }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build release URL
+        id: meta
+        run: |
+          echo "release_url=https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+
+      - name: Get release body from GitHub API
+        id: notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BODY=$(gh release view "${{ steps.meta.outputs.tag }}" --json body -q .body | head -c 1800)
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Send Discord notification
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          URL="${{ steps.meta.outputs.release_url }}"
+          REPO="${{ github.repository }}"
+          BODY="${{ steps.notes.outputs.body }}"
+
+          # Escape special characters for JSON
+          BODY_ESCAPED=$(echo "$BODY" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" | sed 's/^"//;s/"$//')
+
+          curl -fsSL -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"username\": \"VRCStorage Scanner\",
+              \"avatar_url\": \"https://github.com/github.png\",
+              \"embeds\": [{
+                \"title\": \"🚀 Nueva versión: ${TAG}\",
+                \"url\": \"${URL}\",
+                \"description\": ${BODY_ESCAPED},
+                \"color\": 5763719,
+                \"fields\": [
+                  {
+                    \"name\": \"📦 Descargas\",
+                    \"value\": \"[Windows .exe](${URL}) • [Linux x86_64](${URL})\",
+                    \"inline\": false
+                  },
+                  {
+                    \"name\": \"📁 Repositorio\",
+                    \"value\": \"[${REPO}](https://github.com/${REPO})\",
+                    \"inline\": true
+                  }
+                ],
+                \"footer\": {
+                  \"text\": \"vrcstorage-scanner • GitHub Actions\"
+                }
+              }]
+            }"
