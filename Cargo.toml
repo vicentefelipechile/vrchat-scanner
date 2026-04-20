@@ -3,7 +3,9 @@ name = "vrcstorage-scanner"
 version = "0.1.0"
 edition = "2021"
 description = "Static analysis scanner for Unity/VRChat packages"
-authors = ["VRCStorage Team"]
+authors = ["SummerTYT <vicentefelipechile>"]
+repository = "https://github.com/vicentefelipechile/vrchat-scanner"
+homepage = "https://github.com/vicentefelipechile/vrchat-scanner"
 
 [[bin]]
 name = "vrcstorage-scanner"
@@ -58,6 +60,10 @@ anyhow = "1"
 # Output coloreado
 colored = "2"
 indicatif = "0.17"
+
+# Windows console VTP (Virtual Terminal Processing) for ANSI support on Win10
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Console", "Win32_Foundation"] }
 
 # Timestamps
 chrono = { version = "0.4", features = ["serde"] }

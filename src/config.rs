@@ -314,7 +314,7 @@ pub const PTS_POLYGLOT_FILE: u32 = 70;
 // =============================================================================
 
 /// `MetaExternalRef` — .meta file references assets not included in the package.
-pub const PTS_META_EXTERNAL_REF: u32 = 25;
+pub const PTS_META_EXTERNAL_REF: u32 = 5;
 
 /// `MetaFutureTimestamp` — Creation timestamp in the .meta file is in the future.
 /// Possible tampering or crafting outside Unity.

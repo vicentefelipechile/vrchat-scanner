@@ -5,4 +5,5 @@ pub mod ingestion;
 pub mod pipeline;
 pub mod report;
 pub mod scoring;
+pub mod terminal;
 pub mod utils;

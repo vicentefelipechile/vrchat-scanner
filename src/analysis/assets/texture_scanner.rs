@@ -5,6 +5,10 @@ use crate::config::*;
 // Magic bytes for common image formats
 const PNG_MAGIC: &[u8] = &[0x89, 0x50, 0x4E, 0x47];
 const JPG_MAGIC: &[u8] = &[0xFF, 0xD8, 0xFF];
+const EXR_MAGIC: &[u8] = &[0x76, 0x2F, 0x31, 0x01];
+const DDS_MAGIC: &[u8] = b"DDS ";
+const HDR_MAGIC: &[u8] = b"#?RADIANCE";
+const HDR_MAGIC_ALT: &[u8] = b"#?RGBE";
 
 /// Scan a texture file for anomalies.
 pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
@@ -16,11 +20,32 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         .map(|s| s.to_lowercase())
         .unwrap_or_default();
 
-    // 1. Magic bytes vs declared extension
-    let magic_ok = match ext.as_str() {
-        "png"        => data.starts_with(PNG_MAGIC),
-        "jpg" | "jpeg" => data.starts_with(JPG_MAGIC),
-        _            => true, // can't verify for all formats
+    // 1. Magic bytes vs declared extension.
+    //
+    // For natively-compressed formats we also use the magic check to decide
+    // whether to skip entropy: if the bytes confirm the format is legitimate
+    // we trust the high entropy is due to compression; if they don't match we
+    // treat the file as suspicious and run entropy anyway.
+    //
+    // WebP: RIFF????WEBP — 4-byte RIFF header, 4-byte size, 4-byte "WEBP".
+    // EXR:  76 2F 31 01
+    // DDS:  "DDS " (4 ASCII bytes)
+    // HDR:  "#?RADIANCE" or "#?RGBE" (Radiance RGBE format)
+    let (magic_ok, is_natively_compressed) = match ext.as_str() {
+        "png" => (data.starts_with(PNG_MAGIC), true),
+        "jpg" | "jpeg" => (data.starts_with(JPG_MAGIC), true),
+        "webp" => (
+            data.len() >= 12 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP",
+            true,
+        ),
+        "exr" => (data.starts_with(EXR_MAGIC), true),
+        "dds" => (data.starts_with(DDS_MAGIC), true),
+        "hdr" => (
+            data.starts_with(HDR_MAGIC) || data.starts_with(HDR_MAGIC_ALT),
+            true,
+        ),
+        // Unknown format: can't verify magic, not a known compressed format.
+        _ => (true, false),
     };
 
     if !magic_ok {
@@ -36,16 +61,14 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         );
     }
 
-    // 2. Overall entropy — skip natively-compressed formats.
+    // 2. Overall entropy.
     //
-    // PNG, JPEG, and WebP store pixel data as DEFLATE or lossy-compressed
-    // streams, so their byte entropy is always close to 8.0.  Flagging them
-    // would produce a false positive on virtually every legitimate texture.
-    // Only run the check for formats that store raw/uncompressed pixels
-    // (e.g. BMP, TGA, PSD, HDR, EXR, DDS without inner compression).
-    let is_natively_compressed = matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp");
-
-    if !is_natively_compressed {
+    // Skip entropy only when the format is natively compressed AND the magic
+    // bytes confirmed the file is genuine. If magic failed for a "compressed"
+    // format we still run entropy — the file may be hiding a payload behind a
+    // fake extension. For truly raw formats (BMP, TGA, PSD) always check.
+    let skip_entropy = is_natively_compressed && magic_ok;
+    if !skip_entropy {
         let entropy = shannon_entropy(data);
         if entropy > ENTROPY_TEXTURE_HIGH {
             findings.push(

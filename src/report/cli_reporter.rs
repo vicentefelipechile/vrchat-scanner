@@ -1,5 +1,6 @@
 use colored::Colorize;
 use crate::scoring::RiskLevel;
+use crate::terminal::TermCaps;
 use super::{finding::{Finding, FindingId, Severity}, json_reporter::ScanReport};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -11,30 +12,59 @@ use super::{finding::{Finding, FindingId, Severity}, json_reporter::ScanReport};
 /// * `verbose = false` — compact technical output (programmer / CI).
 /// * `verbose = true`  — adds a plain-English explanation under every finding
 ///   and a user-facing verdict at the end (drag-and-drop / end-user mode).
-pub fn print_report(report: &ScanReport, level: RiskLevel, verbose: bool) {
-    let sep  = "━".repeat(52);
-    let thin = "─".repeat(52);
+/// * `caps` — terminal capabilities; when `caps.unicode = false` box-drawing
+///   characters are replaced with plain ASCII hyphens/equals.
+pub fn print_report(report: &ScanReport, level: RiskLevel, verbose: bool, caps: TermCaps) {
+    let (_sep, thin, thick) = if caps.unicode {
+        ("─".repeat(52), "─".repeat(52), "━".repeat(52))
+    } else {
+        ("-".repeat(52), "-".repeat(52), "=".repeat(52))
+    };
 
-    println!("\n{}", "vrcstorage-scanner v0.1.0".bold().cyan());
-    println!("{}", sep.dimmed());
+    // ── File header ───────────────────────────────────────────
+    println!("{}", thick.dimmed());
     println!("{:12} {}", "File:".bold(),    report.file.path);
     println!("{:12} {}", "SHA-256:".bold(), report.file.sha256);
     println!("{:12} {}", "Size:".bold(),    format_bytes(report.file.size_bytes));
     println!("{:12} {}", "Type:".bold(),    report.file.file_type);
-    println!("{}", sep.dimmed());
+    println!("{}", thick.dimmed());
 
+    // ── Asset statistics ──────────────────────────────────────
+    let c = &report.assets_analyzed;
+    println!(
+        "\n{} {}  {} {}  {} {}  {} {}  {} {}  {} {}",
+        "Assets:".bold(),
+        format!("total={}", c.total),
+        "|" .dimmed(),
+        format!("scripts={}", c.scripts),
+        "|" .dimmed(),
+        format!("dlls={}", c.dlls),
+        "|" .dimmed(),
+        format!("textures={}", c.textures),
+        "|" .dimmed(),
+        format!("audio={}", c.audio),
+        "|" .dimmed(),
+        format!("prefabs={}", c.prefabs),
+    );
+
+    // ── Findings ──────────────────────────────────────────────
     let count = report.findings.len();
     if count == 0 {
-        println!("\n{}", "No findings detected. ✓".green().bold());
+        if caps.unicode {
+            println!("\n{}", "  No findings detected. ✓".green().bold());
+        } else {
+            println!("\n{}", "  No findings detected.".green().bold());
+        }
     } else {
         println!("\n{} ({} found)", "FINDINGS".bold(), count);
         println!("{}", thin.dimmed());
 
         for f in &report.findings {
-            print_finding(f, verbose);
+            print_finding(f, verbose, caps);
         }
     }
 
+    // ── Score summary ─────────────────────────────────────────
     println!("{}", thin.dimmed());
     println!("{:14} {}", "Total score:".bold(), report.risk.score);
     println!("{:14} {}", "Risk level:".bold(),  level_colored(level));
@@ -43,14 +73,14 @@ pub fn print_report(report: &ScanReport, level: RiskLevel, verbose: bool) {
     println!("{:14} {}ms", "Duration:".bold(), report.scan_duration_ms);
 
     // Always print a verdict — the key outcome in human-readable terms.
-    print_verdict(level, &report.findings);
+    print_verdict(level, &report.findings, caps);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Finding printer
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn print_finding(f: &Finding, verbose: bool) {
+fn print_finding(f: &Finding, verbose: bool, caps: TermCaps) {
     let severity_label = match f.severity {
         Severity::Critical => format!("[CRITICAL +{}]", f.points).red().bold().to_string(),
         Severity::High     => format!("[HIGH     +{}]", f.points).yellow().bold().to_string(),
@@ -73,14 +103,16 @@ fn print_finding(f: &Finding, verbose: bool) {
             println!("  {}", line.dimmed());
         }
     }
+    let _ = caps; // used by callers for separator style
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Verdict section (always shown)
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn print_verdict(level: RiskLevel, findings: &[Finding]) {
-    let double = "═".repeat(52);
+fn print_verdict(level: RiskLevel, findings: &[Finding], caps: TermCaps) {
+    let double = if caps.unicode { "═".repeat(52) } else { "=".repeat(52) };
+    let repo   = env!("CARGO_PKG_REPOSITORY");
     let critical_high = findings
         .iter()
         .filter(|f| matches!(f.severity, Severity::Critical | Severity::High))
@@ -125,6 +157,12 @@ fn print_verdict(level: RiskLevel, findings: &[Finding]) {
         }
     }
 
+    println!("{}", double.dimmed());
+    println!(
+        "  {} | {}",
+        "vrcstorage-scanner by SummerTYT".dimmed(),
+        repo.dimmed()
+    );
     println!("{}\n", double.dimmed());
 }
 

@@ -82,7 +82,7 @@ vrcstorage-scanner/
 │   │   │   └── obfuscation.rs      ← base64 ratio, short identifiers, XOR, unicode escapes
 │   │   ├── assets/
 │   │   │   ├── mod.rs          ← analyze_asset(): dispatches by AssetType
-│   │   │   ├── texture_scanner.rs  ← magic bytes, entropy (skips PNG/JPEG/WebP), byte-by-byte polyglot scan with PE validation
+│   │   │   ├── texture_scanner.rs  ← magic bytes, entropy (skips PNG/JPEG/WebP/EXR/HDR/DDS), byte-by-byte polyglot scan with PE validation
 │   │   │   ├── audio_scanner.rs    ← entropy (compressed formats exempt), byte-by-byte polyglot scan with PE validation
 │   │   │   └── prefab_scanner.rs   ← YAML parsing, externalObjects, inline Base64
 │   │   └── metadata/
@@ -347,8 +347,9 @@ Conventional variant prefixes (PascalCase → SCREAMING_SNAKE_CASE):
 | Audio compressed (mp3/ogg/aac/flac) | < 4.0 only | — | `AUDIO_UNUSUAL_ENTROPY` |
 
 **Natively-compressed format exemptions (false-positive prevention):**
-- **Textures**: PNG, JPEG, WebP are **exempt** from entropy checks (DEFLATE/lossy compression
-  naturally saturates entropy at ~7.8–8.0).
+- **Textures**: PNG, JPEG, WebP, **EXR, HDR, DDS** are **exempt** from entropy checks.
+  DEFLATE/lossy/ZIP/PIZ/DWAA/BCn compression naturally saturates entropy at ~7.8–8.0.
+  Only BMP, TGA, and PSD (without inner compression) are checked.
 - **Audio**: MP3, OGG, AAC, FLAC, Opus, M4A are **exempt** from the upper entropy bound
   (codec compression pushes entropy near 8.0 legitimately).
 
@@ -699,9 +700,9 @@ Both `texture_scanner.rs` and `audio_scanner.rs` implement this locally as `is_v
 
 ### ❌ Entropy check on compressed texture/audio formats
 
-PNG, JPEG, WebP textures and MP3, OGG, AAC, FLAC, Opus audio files are natively compressed.
-Their entropy is naturally near 8.0. **Never run entropy checks on these formats** — doing so
-would flag virtually every legitimate asset.
+PNG, JPEG, WebP, EXR, HDR, DDS textures and MP3, OGG, AAC, FLAC, Opus audio files are
+natively compressed. Their entropy is naturally near 8.0. **Never run entropy checks on
+these formats** — doing so would flag virtually every legitimate asset.
 
 Use the `is_natively_compressed` / `is_compressed_audio` guard before calling `shannon_entropy`.
 
