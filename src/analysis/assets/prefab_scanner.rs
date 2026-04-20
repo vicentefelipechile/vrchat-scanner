@@ -1,4 +1,4 @@
-use crate::report::{Finding, Severity};
+use crate::report::{Finding, FindingId, Severity};
 use crate::utils::patterns::BASE64_LONG;
 
 /// Scan a Unity .prefab or .asset file (YAML or binary) for anomalies.
@@ -17,7 +17,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         let guid_refs: Vec<_> = text.match_indices("guid: ").collect();
         if guid_refs.len() > 100 {
             findings.push(Finding::new(
-                "PREFAB_EXCESSIVE_GUIDS",
+                FindingId::PrefabExcessiveGuids,
                 Severity::Low,
                 5,
                 location,
@@ -35,7 +35,7 @@ fn analyze_yaml(content: &str, location: &str) -> Vec<Finding> {
     // Check for external references (externalVersions / externalObjects)
     if content.contains("externalObjects:") && !content.contains("externalObjects: {}") {
         findings.push(Finding::new(
-            "META_EXTERNAL_REF",
+            FindingId::MetaExternalRef,
             Severity::Medium,
             25,
             location,
@@ -47,7 +47,7 @@ fn analyze_yaml(content: &str, location: &str) -> Vec<Finding> {
     for m in BASE64_LONG.find_iter(content) {
         if m.len() > 200 {
             findings.push(Finding::new(
-                "PREFAB_INLINE_B64",
+                FindingId::PrefabInlineB64,
                 Severity::Low,
                 8,
                 location,
@@ -63,7 +63,7 @@ fn analyze_yaml(content: &str, location: &str) -> Vec<Finding> {
         let script_count = content.matches("m_Script:").count();
         if script_count > 20 {
             findings.push(Finding::new(
-                "PREFAB_MANY_SCRIPTS",
+                FindingId::PrefabManyScripts,
                 Severity::Low,
                 5,
                 location,

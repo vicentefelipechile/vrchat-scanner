@@ -1,4 +1,4 @@
-use crate::report::{Finding, Severity};
+use crate::report::{Finding, FindingId, Severity};
 use crate::utils::shannon_entropy;
 
 /// Information extracted from a PE file header
@@ -19,7 +19,7 @@ pub fn analyze(data: &[u8], location: &str) -> (PeInfo, Vec<Finding>) {
 
     if !data.starts_with(b"MZ") {
         findings.push(Finding::new(
-            "PE_INVALID_HEADER",
+            FindingId::PeInvalidHeader,
             Severity::Medium,
             15,
             location,
@@ -76,7 +76,7 @@ pub fn analyze(data: &[u8], location: &str) -> (PeInfo, Vec<Finding>) {
                 if entropy >= 7.2 {
                     findings.push(
                         Finding::new(
-                            "PE_HIGH_ENTROPY_SECTION",
+                            FindingId::PeHighEntropySection,
                             Severity::High,
                             55,
                             location,
@@ -87,7 +87,7 @@ pub fn analyze(data: &[u8], location: &str) -> (PeInfo, Vec<Finding>) {
                 } else if entropy >= 6.8 {
                     findings.push(
                         Finding::new(
-                            "PE_HIGH_ENTROPY_SECTION",
+                            FindingId::PeHighEntropySection,
                             Severity::Medium,
                             20,
                             location,
@@ -99,7 +99,7 @@ pub fn analyze(data: &[u8], location: &str) -> (PeInfo, Vec<Finding>) {
 
                 if name.is_empty() {
                     findings.push(Finding::new(
-                        "PE_UNNAMED_SECTION",
+                        FindingId::PeUnnamedSection,
                         Severity::Medium,
                         20,
                         location,
@@ -110,7 +110,7 @@ pub fn analyze(data: &[u8], location: &str) -> (PeInfo, Vec<Finding>) {
                 if is_executable && is_writable {
                     findings.push(
                         Finding::new(
-                            "PE_WRITE_EXECUTE_SECTION",
+                            FindingId::PeWriteExecuteSection,
                             Severity::High,
                             40,
                             location,
@@ -123,7 +123,7 @@ pub fn analyze(data: &[u8], location: &str) -> (PeInfo, Vec<Finding>) {
                 if virtual_size > raw_size.saturating_mul(4) && raw_size > 0 {
                     findings.push(
                         Finding::new(
-                            "PE_INFLATED_SECTION",
+                            FindingId::PeInflatedSection,
                             Severity::Medium,
                             20,
                             location,
@@ -136,7 +136,7 @@ pub fn analyze(data: &[u8], location: &str) -> (PeInfo, Vec<Finding>) {
         }
         Err(e) => {
             findings.push(Finding::new(
-                "PE_PARSE_ERROR",
+                FindingId::PeParseError,
                 Severity::Low,
                 5,
                 location,

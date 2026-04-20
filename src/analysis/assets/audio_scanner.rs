@@ -1,4 +1,4 @@
-use crate::report::{Finding, Severity};
+use crate::report::{Finding, FindingId, Severity};
 use crate::utils::shannon_entropy;
 
 /// Scan an audio file for anomalies.
@@ -14,7 +14,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
     // 1. Entropy check.
     //
     // MP3, OGG, FLAC, and AAC are all compressed audio formats and can easily
-    // reach entropy ≥ 7.8.  Only flag when the value is clearly abnormal:
+    // reach entropy >= 7.8.  Only flag when the value is clearly abnormal:
     //   – very low (< 4.0) → almost certainly not audio
     //   – extremely high (> 7.97) → essentially random, unusual even for
     //     compressed audio and worth noting
@@ -40,7 +40,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
     if unusual {
         findings.push(
             Finding::new(
-                "AUDIO_UNUSUAL_ENTROPY",
+                FindingId::AudioUnusualEntropy,
                 Severity::Low,
                 8,
                 location,
@@ -64,7 +64,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
             if is_valid_pe_header(data, offset) {
                 findings.push(
                     Finding::new(
-                        "POLYGLOT_FILE",
+                        FindingId::PolyglotFile,
                         Severity::High,
                         70,
                         location,
@@ -81,7 +81,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         if window == b"PK\x03\x04" {
             findings.push(
                 Finding::new(
-                    "POLYGLOT_FILE",
+                    FindingId::PolyglotFile,
                     Severity::High,
                     70,
                     location,
@@ -101,7 +101,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
 ///
 /// Checks:
 ///   1. At least 64 bytes remain after `base`.
-///   2. The little-endian u32 at `base + 0x3C` (`e_lfanew`) is ≥ 0x40 and
+///   2. The little-endian u32 at `base + 0x3C` (`e_lfanew`) is >= 0x40 and
 ///      points to a location that fits inside `data`.
 ///   3. The four bytes at `e_lfanew` are exactly `PE\0\0`.
 fn is_valid_pe_header(data: &[u8], base: usize) -> bool {

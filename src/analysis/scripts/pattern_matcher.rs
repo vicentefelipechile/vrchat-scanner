@@ -1,4 +1,4 @@
-use crate::report::{Finding, Severity};
+use crate::report::{Finding, FindingId, Severity};
 use crate::utils::patterns::*;
 
 /// Scan C# source code for dangerous API patterns.
@@ -8,7 +8,7 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
     // CRITICAL — Process execution
     if CS_PROCESS_START.is_match(source) {
         findings.push(Finding::new(
-            "CS_PROCESS_START",
+            FindingId::CsProcessStart,
             Severity::Critical,
             75,
             location,
@@ -25,7 +25,7 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
             60
         };
         findings.push(Finding::new(
-            "CS_ASSEMBLY_LOAD_BYTES",
+            FindingId::CsAssemblyLoadBytes,
             Severity::Critical,
             points,
             location,
@@ -33,10 +33,10 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         ));
     }
 
-    // CRITICAL — Reflection.Emit
+    // MEDIUM — Reflection.Emit
     if CS_REFLECTION_EMIT.is_match(source) {
         findings.push(Finding::new(
-            "CS_REFLECTION_EMIT",
+            FindingId::CsReflectionEmit,
             Severity::Medium,
             40,
             location,
@@ -44,10 +44,10 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         ));
     }
 
-    // ALTO — HTTP/WebClient
+    // MEDIUM — HTTP/WebClient
     if CS_WEBCLIENT.is_match(source) {
         findings.push(Finding::new(
-            "CS_HTTP_CLIENT",
+            FindingId::CsHttpClient,
             Severity::Medium,
             30,
             location,
@@ -55,10 +55,10 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         ));
     }
 
-    // ALTO — File system writes
+    // HIGH — File system writes
     if CS_FILE_WRITE.is_match(source) {
         findings.push(Finding::new(
-            "CS_FILE_WRITE",
+            FindingId::CsFileWrite,
             Severity::High,
             40,
             location,
@@ -66,10 +66,10 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         ));
     }
 
-    // ALTO — BinaryFormatter
+    // HIGH — BinaryFormatter
     if CS_BINARY_FORMATTER.is_match(source) {
         findings.push(Finding::new(
-            "CS_BINARY_FORMATTER",
+            FindingId::CsBinaryFormatter,
             Severity::High,
             45,
             location,
@@ -77,7 +77,7 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         ));
     }
 
-    // MEDIO — DllImport / P/Invoke
+    // MEDIUM/HIGH — DllImport / P/Invoke
     for cap in CS_DLLIMPORT.captures_iter(source) {
         let dll_name = cap.get(1).map(|m| m.as_str()).unwrap_or("?");
         let known_dlls = ["kernel32", "user32", "advapi32", "ntdll", "ws2_32", "shell32"];
@@ -85,16 +85,16 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         let points = if is_known { 45 } else { 60 };
         let severity = if is_known { Severity::Medium } else { Severity::High };
         findings.push(
-            Finding::new("CS_DLLIMPORT_UNKNOWN", severity, points, location,
+            Finding::new(FindingId::CsDllimportUnknown, severity, points, location,
                 "P/Invoke ([DllImport]) detected in C# script")
                 .with_context(format!("DLL: {dll_name}")),
         );
     }
 
-    // MEDIO — Unsafe block
+    // MEDIUM — Unsafe block
     if CS_UNSAFE.is_match(source) {
         findings.push(Finding::new(
-            "CS_UNSAFE_BLOCK",
+            FindingId::CsUnsafeBlock,
             Severity::Medium,
             30,
             location,
@@ -102,10 +102,10 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         ));
     }
 
-    // MEDIO — Registry access
+    // MEDIUM — Registry access
     if CS_REGISTRY.is_match(source) {
         findings.push(Finding::new(
-            "CS_REGISTRY_ACCESS",
+            FindingId::CsRegistryAccess,
             Severity::Medium,
             35,
             location,
@@ -113,10 +113,10 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         ));
     }
 
-    // MEDIO — Environment variables / machine identity
+    // MEDIUM — Environment variables / machine identity
     if CS_ENVIRONMENT.is_match(source) {
         findings.push(Finding::new(
-            "CS_ENVIRONMENT_ACCESS",
+            FindingId::CsEnvironmentAccess,
             Severity::Medium,
             15,
             location,
@@ -124,10 +124,10 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         ));
     }
 
-    // MEDIO — Marshal
+    // MEDIUM — Marshal
     if CS_MARSHAL.is_match(source) {
         findings.push(Finding::new(
-            "CS_MARSHAL_OPS",
+            FindingId::CsMarshalOps,
             Severity::Medium,
             25,
             location,
@@ -138,7 +138,7 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
     // Shell commands (in string literals)
     if SHELL_CMD.is_match(source) {
         findings.push(Finding::new(
-            "CS_SHELL_STRINGS",
+            FindingId::CsShellStrings,
             Severity::High,
             45,
             location,

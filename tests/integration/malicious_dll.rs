@@ -2,6 +2,7 @@
 //! Expected: score > 60 (MEDIUM or higher) for dangerous content.
 
 use vrcstorage_scanner::analysis::scripts::analyze_script;
+use vrcstorage_scanner::report::FindingId;
 use vrcstorage_scanner::scoring::{compute_score, RiskLevel};
 
 // ─────────────────────────────────────────────
@@ -46,12 +47,12 @@ public class Dropper {
 }
 "#;
     let findings = analyze_script(source, "Assets/Scripts/Dropper.cs");
-    let has_process = findings.iter().any(|f| f.id == "CS_PROCESS_START");
+    let has_process = findings.iter().any(|f| f.id == FindingId::CsProcessStart);
     assert!(has_process, "CS_PROCESS_START not detected; findings: {:#?}", findings);
 
     let critical = findings
         .iter()
-        .find(|f| f.id == "CS_PROCESS_START")
+        .find(|f| f.id == FindingId::CsProcessStart)
         .unwrap();
     assert_eq!(
         critical.severity,
@@ -72,7 +73,7 @@ public class Loader {
 }
 "#;
     let findings = analyze_script(source, "Assets/Scripts/Loader.cs");
-    let has = findings.iter().any(|f| f.id == "CS_ASSEMBLY_LOAD_BYTES");
+    let has = findings.iter().any(|f| f.id == FindingId::CsAssemblyLoadBytes);
     assert!(has, "CS_ASSEMBLY_LOAD_BYTES not found; got: {:#?}", findings);
 }
 
@@ -90,7 +91,7 @@ public class SaveLoad {
 }
 "#;
     let findings = analyze_script(source, "Assets/Scripts/SaveLoad.cs");
-    let has = findings.iter().any(|f| f.id == "CS_BINARY_FORMATTER");
+    let has = findings.iter().any(|f| f.id == FindingId::CsBinaryFormatter);
     assert!(has, "CS_BINARY_FORMATTER not flagged; got: {:#?}", findings);
 }
 
@@ -105,7 +106,7 @@ public class NativeCall {
 }
 "#;
     let findings = analyze_script(source, "Assets/Scripts/NativeCall.cs");
-    let has = findings.iter().any(|f| f.id == "CS_DLLIMPORT_UNKNOWN");
+    let has = findings.iter().any(|f| f.id == FindingId::CsDllimportUnknown);
     assert!(has, "CS_DLLIMPORT_UNKNOWN not detected; got: {:#?}", findings);
 }
 
@@ -119,7 +120,7 @@ public class RawMemory {
 }
 "#;
     let findings = analyze_script(source, "Assets/Scripts/RawMemory.cs");
-    let has = findings.iter().any(|f| f.id == "CS_UNSAFE_BLOCK");
+    let has = findings.iter().any(|f| f.id == FindingId::CsUnsafeBlock);
     assert!(has, "CS_UNSAFE_BLOCK not found; got: {:#?}", findings);
 }
 
@@ -135,7 +136,7 @@ public class AutoRun {
 }
 "#;
     let findings = analyze_script(source, "Assets/Scripts/AutoRun.cs");
-    let has = findings.iter().any(|f| f.id == "CS_REGISTRY_ACCESS");
+    let has = findings.iter().any(|f| f.id == FindingId::CsRegistryAccess);
     assert!(has, "CS_REGISTRY_ACCESS not detected; got: {:#?}", findings);
 }
 
@@ -148,7 +149,7 @@ public class CmdRunner {
 }
 "#;
     let findings = analyze_script(source, "Assets/Scripts/CmdRunner.cs");
-    let has = findings.iter().any(|f| f.id == "CS_SHELL_STRINGS");
+    let has = findings.iter().any(|f| f.id == FindingId::CsShellStrings);
     assert!(has, "CS_SHELL_STRINGS not detected; got: {:#?}", findings);
 }
 
@@ -200,7 +201,7 @@ fn non_pe_file_gets_invalid_header_finding() {
     let data = b"This is definitely not a PE file at all.";
     let findings = vrcstorage_scanner::analysis::dll::pe_parser::analyze(data, "fake.dll").1;
 
-    let has = findings.iter().any(|f| f.id == "PE_INVALID_HEADER");
+    let has = findings.iter().any(|f| f.id == FindingId::PeInvalidHeader);
     assert!(has, "PE_INVALID_HEADER not detected for non-PE data; got: {:#?}", findings);
 }
 

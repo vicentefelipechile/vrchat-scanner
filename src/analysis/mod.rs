@@ -6,7 +6,7 @@ pub mod scripts;
 use rayon::prelude::*;
 
 use crate::ingestion::{AssetType, PackageTree};
-use crate::report::{AssetCounts, Finding, Severity};
+use crate::report::{AssetCounts, Finding, FindingId, Severity};
 use crate::utils::patterns::PATH_TRAVERSAL;
 use crate::scoring::context::AnalysisContext;
 
@@ -42,7 +42,7 @@ pub fn run_all_analyses(tree: &PackageTree) -> (Vec<Finding>, AssetCounts, Analy
             // Stage 1 structural checks
             if PATH_TRAVERSAL.is_match(loc) {
                 findings.push(Finding::new(
-                    "PATH_TRAVERSAL",
+                    FindingId::PathTraversal,
                     Severity::Critical,
                     85,
                     loc,
@@ -60,7 +60,7 @@ pub fn run_all_analyses(tree: &PackageTree) -> (Vec<Finding>, AssetCounts, Analy
 
             if forbidden.contains(&ext_lower.as_str()) {
                 findings.push(Finding::new(
-                    "FORBIDDEN_EXTENSION",
+                    FindingId::ForbiddenExtension,
                     Severity::Critical,
                     90,
                     loc,
@@ -76,7 +76,7 @@ pub fn run_all_analyses(tree: &PackageTree) -> (Vec<Finding>, AssetCounts, Analy
             let dot_count = filename.matches('.').count();
             if dot_count >= 2 && (filename.ends_with(".dll") || filename.ends_with(".exe")) {
                 findings.push(Finding::new(
-                    "DOUBLE_EXTENSION",
+                    FindingId::DoubleExtension,
                     Severity::High,
                     50,
                     loc,
@@ -87,7 +87,7 @@ pub fn run_all_analyses(tree: &PackageTree) -> (Vec<Finding>, AssetCounts, Analy
             // DLL outside Plugins folder
             if entry.asset_type == AssetType::Dll && !loc.to_lowercase().contains("plugins") {
                 findings.push(Finding::new(
-                    "DLL_OUTSIDE_PLUGINS",
+                    FindingId::DllOutsidePlugins,
                     Severity::Medium,
                     35,
                     loc,
@@ -138,7 +138,7 @@ pub fn run_all_analyses(tree: &PackageTree) -> (Vec<Finding>, AssetCounts, Analy
     for entry in &entries {
         if entry.asset_type == AssetType::Script && !scripts_with_meta.contains(&entry.original_path) && entry.meta_content.is_none() {
             findings.push(Finding::new(
-                "CS_NO_META",
+                FindingId::CsNoMeta,
                 Severity::Low,
                 10,
                 &entry.original_path,
@@ -151,7 +151,7 @@ pub fn run_all_analyses(tree: &PackageTree) -> (Vec<Finding>, AssetCounts, Analy
     if dll_count > 10 {
         findings.push(
             Finding::new(
-                "EXCESSIVE_DLLS",
+                FindingId::ExcessiveDlls,
                 Severity::Low,
                 15,
                 "package",
@@ -209,19 +209,15 @@ pub fn run_all_analyses(tree: &PackageTree) -> (Vec<Finding>, AssetCounts, Analy
     });
 
     // A package has a "loader" if any script finding signals byte-array execution:
-    //   CS_ASSEMBLY_LOAD_BYTES — Assembly.Load(byte[])
-    //   CS_PROCESS_START       — Process.Start()
-    //   CS_FILE_WRITE          — File.WriteAllBytes / File.Delete etc.
+    //   CsAssemblyLoadBytes — Assembly.Load(byte[])
+    //   CsProcessStart      — Process.Start()
+    //   CsFileWrite         — File.WriteAllBytes / File.Delete etc.
     // Without at least one of these, any POLYGLOT_FILE embedded payload cannot
     // be triggered and its score is reduced in apply_context_reductions().
-    const LOADER_IDS: &[&str] = &[
-        "CS_ASSEMBLY_LOAD_BYTES",
-        "CS_PROCESS_START",
-        "CS_FILE_WRITE",
-    ];
-    let has_loader_script = findings
-        .iter()
-        .any(|f| LOADER_IDS.contains(&f.id.as_str()));
+    let has_loader_script = findings.iter().any(|f| matches!(
+        f.id,
+        FindingId::CsAssemblyLoadBytes | FindingId::CsProcessStart | FindingId::CsFileWrite
+    ));
 
     let context = AnalysisContext {
         has_vrchat_sdk,

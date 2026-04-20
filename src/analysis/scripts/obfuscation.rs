@@ -1,4 +1,4 @@
-use crate::report::{Finding, Severity};
+use crate::report::{Finding, FindingId, Severity};
 use crate::utils::patterns::BASE64_LONG;
 
 /// Detect obfuscation patterns in C# source code.
@@ -13,7 +13,7 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
     if total_chars > 0.0 && (base64_chars / total_chars) > 0.15 {
         findings.push(
             Finding::new(
-                "CS_BASE64_HIGH_RATIO",
+                FindingId::CsBase64HighRatio,
                 Severity::Medium,
                 25,
                 location,
@@ -27,7 +27,7 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
     } else if !base64_matches.is_empty() && base64_matches.iter().any(|m| m.len() > 200) {
         // Very long individual Base64 strings are also suspicious
         findings.push(Finding::new(
-            "CS_BASE64_HIGH_RATIO",
+            FindingId::CsBase64HighRatio,
             Severity::Medium,
             15,
             location,
@@ -48,7 +48,7 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         if ratio > 0.4 && tokens.len() > 50 {
             findings.push(
                 Finding::new(
-                    "CS_OBFUSCATED_IDENTIFIERS",
+                    FindingId::CsObfuscatedIdentifiers,
                     Severity::Low,
                     15,
                     location,
@@ -69,7 +69,7 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         // Look for byte array + XOR combination
         if (source.contains("byte[]") || source.contains("byte [")) && (source.contains("^ ") || source.contains("^=")) {
             findings.push(Finding::new(
-                "CS_XOR_DECRYPTION",
+                FindingId::CsXorDecryption,
                 Severity::Medium,
                 20,
                 location,
@@ -81,7 +81,7 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
     // 4. Unicode escape sequences forming keywords
     if source.contains("\\u0") {
         findings.push(Finding::new(
-            "CS_UNICODE_ESCAPES",
+            FindingId::CsUnicodeEscapes,
             Severity::High,
             30,
             location,

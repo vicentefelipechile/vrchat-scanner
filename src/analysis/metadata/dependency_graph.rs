@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::report::{Finding, Severity};
+use crate::report::{Finding, FindingId, Severity};
 
 /// Threshold: a DLL referenced by more than this many assets is considered suspicious.
 const DEPENDENCY_THRESHOLD: usize = 5;
@@ -30,7 +30,7 @@ pub fn analyze(
 
             findings.push(
                 Finding::new(
-                    "DLL_MANY_DEPENDENTS",
+                    FindingId::DllManyDependents,
                     Severity::Low,
                     15,
                     location,

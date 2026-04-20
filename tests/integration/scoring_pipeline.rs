@@ -3,14 +3,14 @@
 //! Tests the full `compute_score` + `apply_context_reductions` flow,
 //! verifying score thresholds map to the correct RiskLevel.
 
-use vrcstorage_scanner::report::{Finding, Severity};
+use vrcstorage_scanner::report::{Finding, FindingId, Severity};
 use vrcstorage_scanner::scoring::{
     apply_context_reductions, compute_score, context::AnalysisContext, RiskLevel,
 };
 
 // ─── Helpers ─────────────────────────────────
 
-fn finding(id: &str, sev: Severity, points: u32) -> Finding {
+fn finding(id: FindingId, sev: Severity, points: u32) -> Finding {
     Finding::new(id, sev, points, "test/location", "test detail")
 }
 
@@ -25,7 +25,7 @@ fn score_zero_is_clean() {
 
 #[test]
 fn score_30_is_clean_boundary() {
-    let findings = vec![finding("A", Severity::Low, 30)];
+    let findings = vec![finding(FindingId::CsNoMeta, Severity::Low, 30)];
     let (score, level) = compute_score(&findings);
     assert_eq!(score, 30);
     assert_eq!(level, RiskLevel::Clean);
@@ -33,49 +33,49 @@ fn score_30_is_clean_boundary() {
 
 #[test]
 fn score_31_is_low() {
-    let findings = vec![finding("A", Severity::Low, 31)];
+    let findings = vec![finding(FindingId::CsNoMeta, Severity::Low, 31)];
     let (_, level) = compute_score(&findings);
     assert_eq!(level, RiskLevel::Low);
 }
 
 #[test]
 fn score_60_is_low_boundary() {
-    let findings = vec![finding("A", Severity::Low, 60)];
+    let findings = vec![finding(FindingId::CsNoMeta, Severity::Low, 60)];
     let (_, level) = compute_score(&findings);
     assert_eq!(level, RiskLevel::Low);
 }
 
 #[test]
 fn score_61_is_medium() {
-    let findings = vec![finding("A", Severity::Medium, 61)];
+    let findings = vec![finding(FindingId::CsUnsafeBlock, Severity::Medium, 61)];
     let (_, level) = compute_score(&findings);
     assert_eq!(level, RiskLevel::Medium);
 }
 
 #[test]
 fn score_100_is_medium_boundary() {
-    let findings = vec![finding("A", Severity::Medium, 100)];
+    let findings = vec![finding(FindingId::CsUnsafeBlock, Severity::Medium, 100)];
     let (_, level) = compute_score(&findings);
     assert_eq!(level, RiskLevel::Medium);
 }
 
 #[test]
 fn score_101_is_high() {
-    let findings = vec![finding("A", Severity::High, 101)];
+    let findings = vec![finding(FindingId::CsFileWrite, Severity::High, 101)];
     let (_, level) = compute_score(&findings);
     assert_eq!(level, RiskLevel::High);
 }
 
 #[test]
 fn score_150_is_high_boundary() {
-    let findings = vec![finding("A", Severity::High, 150)];
+    let findings = vec![finding(FindingId::CsFileWrite, Severity::High, 150)];
     let (_, level) = compute_score(&findings);
     assert_eq!(level, RiskLevel::High);
 }
 
 #[test]
 fn score_151_is_critical() {
-    let findings = vec![finding("A", Severity::Critical, 151)];
+    let findings = vec![finding(FindingId::CsProcessStart, Severity::Critical, 151)];
     let (_, level) = compute_score(&findings);
     assert_eq!(level, RiskLevel::Critical);
 }
@@ -83,9 +83,9 @@ fn score_151_is_critical() {
 #[test]
 fn score_accumulates_all_findings() {
     let findings = vec![
-        finding("A", Severity::Low, 10),
-        finding("B", Severity::Medium, 25),
-        finding("C", Severity::High, 55),
+        finding(FindingId::CsNoMeta, Severity::Low, 10),
+        finding(FindingId::CsUnsafeBlock, Severity::Medium, 25),
+        finding(FindingId::PeHighEntropySection, Severity::High, 55),
     ];
     let (score, _) = compute_score(&findings);
     assert_eq!(score, 90);
@@ -96,7 +96,7 @@ fn score_accumulates_all_findings() {
 #[test]
 fn vrchat_sdk_reduces_http_client_finding() {
     let mut findings = vec![
-        Finding::new("CS_HTTP_CLIENT", Severity::Medium, 30, "Test.cs", "HTTP client"),
+        Finding::new(FindingId::CsHttpClient, Severity::Medium, 30, "Test.cs", "HTTP client"),
     ];
     let ctx = AnalysisContext {
         has_vrchat_sdk: true,
@@ -116,7 +116,7 @@ fn vrchat_sdk_reduces_http_client_finding() {
 #[test]
 fn no_sdk_does_not_reduce_http_client() {
     let mut findings = vec![
-        Finding::new("CS_HTTP_CLIENT", Severity::Medium, 30, "Test.cs", "HTTP client"),
+        Finding::new(FindingId::CsHttpClient, Severity::Medium, 30, "Test.cs", "HTTP client"),
     ];
     let ctx = AnalysisContext {
         has_vrchat_sdk: false,
@@ -132,7 +132,7 @@ fn no_sdk_does_not_reduce_http_client() {
 #[test]
 fn editor_folder_reduces_reflection_emit() {
     let mut findings = vec![
-        Finding::new("CS_REFLECTION_EMIT", Severity::Medium, 40, "Editor/Tool.cs", "Reflect"),
+        Finding::new(FindingId::CsReflectionEmit, Severity::Medium, 40, "Editor/Tool.cs", "Reflect"),
     ];
     let ctx = AnalysisContext {
         has_vrchat_sdk: false,
@@ -152,7 +152,7 @@ fn editor_folder_reduces_reflection_emit() {
 #[test]
 fn managed_dotnet_reduces_dll_outside_plugins() {
     let mut findings = vec![
-        Finding::new("DLL_OUTSIDE_PLUGINS", Severity::Medium, 35, "Assets/Lib.dll", "Outside"),
+        Finding::new(FindingId::DllOutsidePlugins, Severity::Medium, 35, "Assets/Lib.dll", "Outside"),
     ];
     let ctx = AnalysisContext {
         has_vrchat_sdk: false,
@@ -173,7 +173,7 @@ fn managed_dotnet_reduces_dll_outside_plugins() {
 fn critical_findings_never_reduced_by_context() {
     // Process.Start is CRITICAL — context reductions should not apply to it
     let mut findings = vec![
-        Finding::new("CS_PROCESS_START", Severity::Critical, 75, "Evil.cs", "Process"),
+        Finding::new(FindingId::CsProcessStart, Severity::Critical, 75, "Evil.cs", "Process"),
     ];
     let ctx = AnalysisContext {
         has_vrchat_sdk: true,
@@ -196,7 +196,7 @@ fn critical_findings_never_reduced_by_context() {
 fn polyglot_without_loader_script_is_reduced() {
     // A polyglot texture/audio alone cannot execute — score should drop to 15.
     let mut findings = vec![
-        Finding::new("POLYGLOT_FILE", Severity::High, 70, "Assets/Textures/evil.png", "PE in PNG"),
+        Finding::new(FindingId::PolyglotFile, Severity::High, 70, "Assets/Textures/evil.png", "PE in PNG"),
     ];
     let ctx = AnalysisContext {
         has_vrchat_sdk: false,
@@ -220,7 +220,7 @@ fn polyglot_with_loader_script_keeps_full_score() {
     // When Assembly.Load / Process.Start is also present, the payload IS
     // potentially exploitable — keep the original 70 pts.
     let mut findings = vec![
-        Finding::new("POLYGLOT_FILE", Severity::High, 70, "Assets/Textures/evil.png", "PE in PNG"),
+        Finding::new(FindingId::PolyglotFile, Severity::High, 70, "Assets/Textures/evil.png", "PE in PNG"),
     ];
     let ctx = AnalysisContext {
         has_vrchat_sdk: false,

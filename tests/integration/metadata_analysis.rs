@@ -1,6 +1,7 @@
 //! Integration tests — Unity .meta parsing and dependency graph analysis.
 
 use vrcstorage_scanner::analysis::metadata::{meta_parser, dependency_graph};
+use vrcstorage_scanner::report::FindingId;
 
 // ─── meta_parser ─────────────────────────────
 
@@ -21,7 +22,7 @@ MonoImporter:
 
     let suspicious: Vec<_> = findings
         .iter()
-        .filter(|f| f.id != "META_FUTURE_TIMESTAMP")   // ignore timestamp issues
+        .filter(|f| f.id != FindingId::MetaFutureTimestamp)   // ignore timestamp issues
         .collect();
     assert!(suspicious.is_empty(), "Clean meta should have no findings; got: {:#?}", suspicious);
 }
@@ -34,7 +35,7 @@ externalObjects:
   SomeType: {fileID: 12345, guid: 11112222333344445555666677778888, type: 3}
 "#;
     let (_info, findings) = meta_parser::analyze(meta, "Assets/Plugins/External.cs.meta");
-    let has = findings.iter().any(|f| f.id == "META_EXTERNAL_REF");
+    let has = findings.iter().any(|f| f.id == FindingId::MetaExternalRef);
     assert!(has, "META_EXTERNAL_REF not detected; got: {:#?}", findings);
 }
 
@@ -47,7 +48,7 @@ fn meta_future_timestamp_flagged() {
         future_ts
     );
     let (_info, findings) = meta_parser::analyze(&meta, "Assets/Scripts/Future.cs.meta");
-    let has = findings.iter().any(|f| f.id == "META_FUTURE_TIMESTAMP");
+    let has = findings.iter().any(|f| f.id == FindingId::MetaFutureTimestamp);
     assert!(has, "META_FUTURE_TIMESTAMP not flagged; got: {:#?}", findings);
 }
 
@@ -62,7 +63,7 @@ fn meta_past_timestamp_not_flagged() {
     let (_info, findings) = meta_parser::analyze(&meta, "Assets/Scripts/Old.cs.meta");
     let timestamp_findings: Vec<_> = findings
         .iter()
-        .filter(|f| f.id == "META_FUTURE_TIMESTAMP")
+        .filter(|f| f.id == FindingId::MetaFutureTimestamp)
         .collect();
     assert!(
         timestamp_findings.is_empty(),
@@ -93,7 +94,7 @@ fn dll_with_many_dependents_flagged() {
     dll_guid_count.insert("abc123".to_string(), 6usize);
 
     let findings = dependency_graph::analyze(&guid_to_path, &dll_guid_count, "package");
-    let has = findings.iter().any(|f| f.id == "DLL_MANY_DEPENDENTS");
+    let has = findings.iter().any(|f| f.id == FindingId::DllManyDependents);
     assert!(has, "DLL_MANY_DEPENDENTS not flagged; got: {:#?}", findings);
 }
 

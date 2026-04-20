@@ -7,6 +7,7 @@ use vrcstorage_scanner::analysis::scripts::analyze_script;
 use vrcstorage_scanner::analysis::assets::{texture_scanner, audio_scanner};
 use vrcstorage_scanner::ingestion::type_detection::detect_type;
 use vrcstorage_scanner::ingestion::FileType;
+use vrcstorage_scanner::report::FindingId;
 use vrcstorage_scanner::utils::shannon_entropy;
 
 // ─────────────────────────────────────────────
@@ -112,7 +113,7 @@ public class Telemetry {
 }
 "#;
     let findings = analyze_script(source, "Assets/Scripts/Telemetry.cs");
-    let has = findings.iter().any(|f| f.id == "CS_ENVIRONMENT_ACCESS");
+    let has = findings.iter().any(|f| f.id == FindingId::CsEnvironmentAccess);
     assert!(has, "CS_ENVIRONMENT_ACCESS not flagged; got: {:#?}", findings);
 }
 
@@ -128,7 +129,7 @@ public class RawPtr {
 }
 "#;
     let findings = analyze_script(source, "Assets/Scripts/RawPtr.cs");
-    let has = findings.iter().any(|f| f.id == "CS_MARSHAL_OPS");
+    let has = findings.iter().any(|f| f.id == FindingId::CsMarshalOps);
     assert!(has, "CS_MARSHAL_OPS not detected; got: {:#?}", findings);
 }
 
@@ -143,7 +144,7 @@ public class DataExfil {
 }
 "#;
     let findings = analyze_script(source, "Assets/Scripts/DataExfil.cs");
-    let has = findings.iter().any(|f| f.id == "CS_FILE_WRITE");
+    let has = findings.iter().any(|f| f.id == FindingId::CsFileWrite);
     assert!(has, "CS_FILE_WRITE not flagged for File.WriteAllText; got: {:#?}", findings);
 }
 
@@ -159,7 +160,7 @@ public class CodeGen {
 }
 "#;
     let findings = analyze_script(source, "Assets/Scripts/CodeGen.cs");
-    let ref_emit: Vec<_> = findings.iter().filter(|f| f.id == "CS_REFLECTION_EMIT").collect();
+    let ref_emit: Vec<_> = findings.iter().filter(|f| f.id == FindingId::CsReflectionEmit).collect();
 
     if !ref_emit.is_empty() {
         let is_medium = ref_emit[0].severity == vrcstorage_scanner::report::Severity::Medium;
@@ -176,10 +177,10 @@ public class CodeGen {
 fn finding_with_context_stores_context() {
     use vrcstorage_scanner::report::{Finding, Severity};
 
-    let f = Finding::new("TEST_ID", Severity::High, 50, "path/to/file", "Some detail")
+    let f = Finding::new(FindingId::PeHighEntropySection, Severity::High, 50, "path/to/file", "Some detail")
         .with_context("extra info here");
 
-    assert_eq!(f.id, "TEST_ID");
+    assert_eq!(f.id, FindingId::PeHighEntropySection);
     assert_eq!(f.points, 50);
     assert_eq!(f.context.as_deref(), Some("extra info here"));
 }
@@ -188,7 +189,7 @@ fn finding_with_context_stores_context() {
 fn finding_without_context_is_none() {
     use vrcstorage_scanner::report::{Finding, Severity};
 
-    let f = Finding::new("TEST_ID", Severity::Low, 10, "some/file.cs", "detail");
+    let f = Finding::new(FindingId::CsNoMeta, Severity::Low, 10, "some/file.cs", "detail");
     assert!(f.context.is_none());
 }
 

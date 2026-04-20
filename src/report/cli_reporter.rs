@@ -1,6 +1,6 @@
 use colored::Colorize;
 use crate::scoring::RiskLevel;
-use super::{finding::{Finding, Severity}, json_reporter::ScanReport};
+use super::{finding::{Finding, FindingId, Severity}, json_reporter::ScanReport};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public entry point
@@ -66,7 +66,7 @@ fn print_finding(f: &Finding, verbose: bool) {
     }
 
     if verbose {
-        let explanation = human_explanation(&f.id);
+        let explanation = human_explanation(f.id);
         // Word-wrap at ~60 chars and indent every line
         let wrapped = word_wrap(explanation, 60);
         for line in wrapped {
@@ -134,187 +134,264 @@ fn print_verdict(level: RiskLevel, findings: &[Finding]) {
 
 /// Return a plain-English explanation for why a finding is suspicious
 /// and what it means in practice for a non-technical user.
-fn human_explanation(id: &str) -> &'static str {
+fn human_explanation(id: FindingId) -> &'static str {
     match id {
-        "FORBIDDEN_EXTENSION" =>
+        FindingId::ForbiddenExtension =>
             "The package contains a standalone executable (.exe, .bat, .ps1, \
              etc.). Legitimate Unity packages should never ship runnable files. \
              This is a strong indicator of malicious intent.",
 
-        "PATH_TRAVERSAL" =>
+        FindingId::PathTraversal =>
             "A file path inside the package uses '../' sequences. These can \
              trick Unity into writing files outside your project folder — \
              a classic attack that can overwrite system files.",
 
-        "CS_ASSEMBLY_LOAD_BYTES" =>
+        FindingId::CsAssemblyLoadBytes =>
             "A C# script loads a .NET library from raw bytes at runtime. \
              Malicious packages use this to hide their payload: the real \
              code only appears in memory, invisible to file-based scanners.",
 
-        "CS_PROCESS_START" =>
+        FindingId::CsProcessStart =>
             "A C# script launches an external program on your computer. \
              No legitimate VRChat or Unity content ever needs to start \
              external processes. This is almost always malicious.",
 
-        "POLYGLOT_FILE" =>
+        FindingId::PolyglotFile =>
             "A file is structurally valid in two different formats at once \
              (e.g., a PNG that is also a Windows executable). Without a \
              companion loader script this payload is inert, but it is still \
              an unusual and suspicious artifact.",
 
-        "CS_DLLIMPORT_UNKNOWN" =>
+        FindingId::CsDllimportUnknown =>
             "A C# script imports a function from an unknown native DLL via \
              P/Invoke. This bypasses .NET's safety sandbox and can run \
              arbitrary native machine code.",
 
-        "DLL_IMPORT_SOCKET" =>
+        FindingId::DllImportSockets =>
             "A DLL imports Windows socket libraries (ws2_32.dll), which \
              enable raw network connections. Unity content rarely needs this; \
              it may be used to establish a covert communication channel.",
 
-        "PE_HIGH_ENTROPY_SECTION" =>
+        FindingId::PeHighEntropySection =>
             "A DLL section has very high data randomness (entropy). \
              Legitimate compiled code has recognisable patterns. Very high \
              entropy usually means the section is packed or encrypted to \
              hide its real contents from scanners.",
 
-        "CS_URL_UNKNOWN_DOMAIN" =>
+        FindingId::CsUrlUnknownDomain =>
             "A script contains a URL pointing to an unknown external server. \
              This could be used to download additional malicious code or \
              silently send your data to a remote server.",
 
-        "CS_IP_HARDCODED" =>
+        FindingId::CsIpHardcoded =>
             "A hardcoded IP address was found in a script. This is a common \
              sign of a command-and-control (C2) setup, where the malware \
              phones home to receive instructions.",
 
-        "MAGIC_MISMATCH" =>
+        FindingId::MagicMismatch =>
             "The file's actual binary format does not match its extension. \
              For example, a file named '.png' that is actually a Windows \
              executable. This is a disguise technique.",
 
-        "DOUBLE_EXTENSION" =>
+        FindingId::DoubleExtension =>
             "A file uses two extensions (e.g., file.png.dll) to make an \
              executable look like an innocent image or audio file.",
 
-        "CS_BINARY_FORMATTER" =>
+        FindingId::CsBinaryFormatter =>
             "A script uses BinaryFormatter, which has well-known \
              deserialization vulnerabilities. An attacker can craft a \
              malicious payload that executes arbitrary code when \
              deserialized.",
 
-        "CS_SHELL_STRINGS" =>
+        FindingId::CsShellStrings =>
             "Strings referencing shell commands (cmd.exe, powershell, bash, \
              curl, etc.) were found. This suggests the package may attempt \
              to run system commands on your machine.",
 
-        "CS_FILE_WRITE" =>
+        FindingId::CsFileWrite =>
             "A script writes, deletes, or moves files on your computer. \
              Legitimate VRChat content has no reason to access your \
              filesystem directly. This can be used to drop additional \
              files or destroy data.",
 
-        "PE_WRITE_EXECUTE_SECTION" =>
+        FindingId::PeWriteExecuteSection =>
             "A DLL has memory regions that are simultaneously writable and \
              executable. This is a hallmark of code that modifies itself in \
              memory or injects shellcode — a serious red flag.",
 
-        "CS_REFLECTION_EMIT" =>
+        FindingId::CsReflectionEmit =>
             "A script compiles and executes brand-new .NET code at runtime. \
              This means the real malicious code may not exist in any file — \
              it is generated on the fly after installation.",
 
-        "DLL_OUTSIDE_PLUGINS" =>
+        FindingId::DllOutsidePlugins =>
             "A DLL is located outside the standard Assets/Plugins/ folder. \
              Unity expects managed libraries there. Unusual placement can \
              indicate that the file was added to avoid visibility.",
 
-        "CS_REGISTRY_ACCESS" =>
+        FindingId::CsRegistryAccess =>
             "A script reads or writes Windows Registry keys. \
              Unity/VRChat content running inside the game engine has no \
              legitimate reason to touch the Windows Registry.",
 
-        "CS_HTTP_CLIENT" =>
+        FindingId::CsHttpClient =>
             "A script makes HTTP/HTTPS requests. This is normal in VRChat \
              SDK tools (e.g., avatar uploads), but could also be used to \
              download additional payloads or exfiltrate data.",
 
-        "CS_UNSAFE_BLOCK" =>
+        FindingId::CsUnsafeBlock =>
             "A script uses C# 'unsafe' code, which bypasses .NET's memory \
              safety guarantees and allows raw pointer operations. Legitimate \
              use exists (e.g., high-performance math), but it also opens \
              the door to memory corruption exploits.",
 
-        "META_EXTERNAL_REF" =>
+        FindingId::MetaExternalRef =>
             "A .meta file references assets that are not included in this \
              package. Those assets would be loaded from another source \
              whose contents are not being scanned.",
 
-        "CS_BASE64_HIGH_RATIO" =>
+        FindingId::CsBase64HighRatio =>
             "There is a large concentrated block of Base64 data in the code. \
              Base64 is plain text, so tools encode malicious bytes in it \
              to avoid binary detection, then decode it at runtime.",
 
-        "CS_MARSHAL_OPS" =>
+        FindingId::CsMarshalOps =>
             "A script uses raw memory operations (Marshal.Copy, \
              AllocHGlobal, GetFunctionPointerForDelegate). These are \
              advanced techniques that can be used to execute shellcode \
              directly in memory.",
 
-        "PE_UNNAMED_SECTION" =>
+        FindingId::PeUnnamedSection =>
             "A DLL section has no name. Legitimate compilers always name \
              sections (.text, .data, .rdata, etc.). A nameless section \
              is unusual and may indicate manual binary patching.",
 
-        "PE_INFLATED_SECTION" =>
+        FindingId::PeInflatedSection =>
             "A DLL section is much larger in memory than it is on disk. \
              Code can be hidden in the gap — it only materialises in RAM \
              after the DLL is loaded, making it invisible in the file.",
 
-        "DLL_MANY_DEPENDENTS" =>
+        FindingId::DllManyDependents =>
             "A single DLL is imported by many different assets in the \
              package. If that DLL is malicious, it has a wide blast radius \
              across the entire project.",
 
-        "EXCESSIVE_DLLS" =>
+        FindingId::ExcessiveDlls =>
             "The package ships an unusually large number of DLL files. \
              More DLLs means more attack surface and more code to review.",
 
-        "CS_OBFUSCATED_IDENTIFIERS" =>
+        FindingId::CsObfuscatedIdentifiers =>
             "Script variables and methods use meaninglessly short names \
              (single letters). Obfuscation tools do this to hide a \
              script's true purpose and make manual review very difficult.",
 
-        "DLL_STRINGS_SUSPICIOUS_PATH" =>
+        FindingId::DllStringsSuspiciousPath =>
             "A DLL contains strings that look like system file paths \
              (%APPDATA%, C:\\Windows\\, /etc/, etc.). This suggests the DLL \
              intends to access or modify system locations.",
 
-        "DLL_IMPORT_REGISTRY" =>
+        FindingId::DllImportRegistry =>
             "A DLL references Windows Registry paths. This suggests it may \
              read or modify system configuration outside of the game.",
 
-        "CS_ENVIRONMENT_ACCESS" =>
+        FindingId::CsEnvironmentAccess =>
             "A script reads environment variables such as your username or \
              machine name. This can be used to fingerprint or target \
              specific computers.",
 
-        "CS_NO_META" =>
+        FindingId::CsNoMeta =>
             "A C# script has no accompanying .meta file. Unity generates \
              these automatically for every tracked asset. A missing .meta \
              suggests the script was injected outside Unity's normal \
              workflow.",
 
-        "TEXTURE_HIGH_ENTROPY" =>
+        FindingId::TextureHighEntropy =>
             "This texture has unusually random byte distribution for its \
              format. For uncompressed formats this can indicate hidden data \
              embedded inside the image.",
 
-        "AUDIO_UNUSUAL_ENTROPY" =>
+        FindingId::AudioUnusualEntropy =>
             "This audio file has an abnormal entropy level for its format, \
              which may indicate it is not a genuine audio file.",
 
-        _ => "No additional explanation is available for this finding.",
+        FindingId::CsXorDecryption =>
+            "A XOR operation on a byte array was detected. This is a common \
+             technique used to obfuscate strings or embedded payloads that \
+             are decoded at runtime.",
+
+        FindingId::CsUnicodeEscapes =>
+            "Unicode escape sequences were found in C# source code. \
+             Obfuscators use these to disguise keywords and API calls as \
+             innocent character sequences.",
+
+        FindingId::PeInvalidHeader =>
+            "The file does not start with the expected PE magic bytes (MZ). \
+             This DLL may be corrupted or intentionally malformed.",
+
+        FindingId::PeParseError =>
+            "The PE header could not be fully parsed. The binary may be \
+             intentionally malformed to evade analysis tools.",
+
+        FindingId::DllImportCreateprocess =>
+            "A DLL imports process-creation APIs (CreateProcess, \
+             ShellExecute, WinExec) capable of launching arbitrary \
+             executables on the host system.",
+
+        FindingId::DllImportCreateremotethread =>
+            "A DLL imports thread-injection APIs (CreateRemoteThread, \
+             RtlCreateUserThread) classically used for code injection into \
+             other processes.",
+
+        FindingId::DllImportInternet =>
+            "A DLL imports WinInet or WinHTTP APIs used to make network \
+             requests, potentially to download payloads or exfiltrate data.",
+
+        FindingId::DllImportWriteProcessMem =>
+            "A DLL imports WriteProcessMemory, which is the core API for \
+             injecting code or data into another running process.",
+
+        FindingId::DllImportVirtualAlloc =>
+            "A DLL imports VirtualAlloc, used to allocate executable memory \
+             regions — a key step in shellcode injection.",
+
+        FindingId::DllImportLoadlibrary =>
+            "A DLL imports LoadLibrary, enabling it to dynamically load \
+             additional DLLs at runtime that are not visible at import time.",
+
+        FindingId::DllImportGetprocaddress =>
+            "A DLL imports GetProcAddress to resolve function pointers at \
+             runtime, hiding what APIs it actually calls from static analysis.",
+
+        FindingId::DllImportFileOps =>
+            "A DLL imports file-deletion APIs (DeleteFile), which could be \
+             used to remove evidence or destroy user data.",
+
+        FindingId::DllImportCrypto =>
+            "A DLL imports cryptographic APIs. While common in legitimate \
+             software, these are also used by ransomware to encrypt files.",
+
+        FindingId::DllImportSysinfo =>
+            "A DLL queries system identity information (computer name, \
+             username). This is often used for fingerprinting or victim \
+             targeting.",
+
+        FindingId::MetaFutureTimestamp =>
+            "A .meta file contains a creation timestamp set in the future. \
+             This is unusual and may indicate the file was tampered with \
+             or crafted outside Unity.",
+
+        FindingId::PrefabExcessiveGuids =>
+            "A binary prefab contains an abnormally large number of GUID \
+             references, which may indicate hidden dependencies.",
+
+        FindingId::PrefabInlineB64 =>
+            "A YAML prefab or asset file contains a long Base64-encoded \
+             field. This could be an inline texture or an embedded payload.",
+
+        FindingId::PrefabManyScripts =>
+            "A prefab references an unusually large number of scripts. \
+             This increases the attack surface if any of those scripts \
+             contain malicious code.",
     }
 }
 

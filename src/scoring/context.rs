@@ -1,5 +1,4 @@
-use crate::report::Finding;
-use crate::report::Severity;
+use crate::report::{Finding, FindingId, Severity};
 
 /// Apply context-aware score reductions to findings.
 ///
@@ -12,23 +11,23 @@ pub fn apply_context_reductions(findings: &mut [Finding], source_context: &Analy
             continue;
         }
 
-        match finding.id.as_str() {
+        match finding.id {
             // HTTP in VRChat scripts is expected — reduce from 30 to 10
-            "CS_HTTP_CLIENT" if source_context.has_vrchat_sdk => {
+            FindingId::CsHttpClient if source_context.has_vrchat_sdk => {
                 finding.points = finding.points.min(10);
                 finding.context = Some(
                     "Reduced: UnityWebRequest expected in VRChat SDK context".to_string(),
                 );
             }
             // Reflection.Emit in Editor folder is legitimate
-            "CS_REFLECTION_EMIT" if source_context.in_editor_folder => {
+            FindingId::CsReflectionEmit if source_context.in_editor_folder => {
                 finding.points = finding.points.min(15);
                 finding.context = Some(
                     "Reduced: Reflection.Emit in Editor/ folder (legitimate editor tool)".to_string(),
                 );
             }
             // Managed DLL in Plugins/ without dangerous imports → no penalty
-            "DLL_OUTSIDE_PLUGINS" if source_context.is_managed_dotnet => {
+            FindingId::DllOutsidePlugins if source_context.is_managed_dotnet => {
                 finding.points = 0;
                 finding.context = Some(
                     "Reduced: managed .NET DLL in Plugins/ without dangerous imports".to_string(),
@@ -42,7 +41,7 @@ pub fn apply_context_reductions(findings: &mut [Finding], source_context: &Analy
             // script in the same package the payload is inert — analogous to
             // having a payload but no trigger.  Reduce from 70 → 15 pts
             // (kept above zero because the anomaly is still worth noting).
-            "POLYGLOT_FILE" if !source_context.has_loader_script => {
+            FindingId::PolyglotFile if !source_context.has_loader_script => {
                 finding.points = 15;
                 finding.context = Some(
                     "Reduced: no loader script (Assembly.Load / Process.Start / File.Write) \
@@ -65,8 +64,8 @@ pub struct AnalysisContext {
     /// File is located inside an Editor/ folder
     pub in_editor_folder: bool,
     /// Package contains a script capable of loading or executing byte arrays
-    /// (CS_ASSEMBLY_LOAD_BYTES, CS_PROCESS_START, or CS_FILE_WRITE findings).
-    /// When false, POLYGLOT_FILE findings are considered inert and their score
+    /// (CsAssemblyLoadBytes, CsProcessStart, or CsFileWrite findings).
+    /// When false, PolyglotFile findings are considered inert and their score
     /// is reduced significantly.
     pub has_loader_script: bool,
 }

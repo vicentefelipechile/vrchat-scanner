@@ -2,6 +2,7 @@
 
 use vrcstorage_scanner::analysis::assets::{analyze_asset, texture_scanner, audio_scanner, prefab_scanner};
 use vrcstorage_scanner::ingestion::AssetType;
+use vrcstorage_scanner::report::FindingId;
 
 // ─────────────────────────────────────────────
 // Texture magic byte checks
@@ -12,9 +13,6 @@ const PNG_HEADER: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
 /// Valid JPEG header
 const JPG_HEADER: &[u8] = &[0xFF, 0xD8, 0xFF, 0xE0];
-
-/// PE magic bytes
-const MZ_HEADER: &[u8] = b"MZ";
 
 /// ZIP magic bytes
 const ZIP_MAGIC: &[u8] = b"PK\x03\x04";
@@ -38,7 +36,7 @@ fn valid_png_no_magic_mismatch() {
     let data = make_png(&[0u8; 600]);
     let findings = texture_scanner::analyze(&data, "Assets/Textures/icon.png");
 
-    let mismatch = findings.iter().any(|f| f.id == "MAGIC_MISMATCH");
+    let mismatch = findings.iter().any(|f| f.id == FindingId::MagicMismatch);
     assert!(!mismatch, "Valid PNG should not produce MAGIC_MISMATCH; got: {:#?}", findings);
 }
 
@@ -48,7 +46,7 @@ fn wrong_magic_for_png_extension_flagged() {
     let data = make_jpg(&[0u8; 600]);
     let findings = texture_scanner::analyze(&data, "Assets/Textures/icon.png");
 
-    let has = findings.iter().any(|f| f.id == "MAGIC_MISMATCH");
+    let has = findings.iter().any(|f| f.id == FindingId::MagicMismatch);
     assert!(has, "MAGIC_MISMATCH not detected for JPEG data with .png extension; got: {:#?}", findings);
 }
 
@@ -81,7 +79,7 @@ fn pe_embedded_inside_png_is_polyglot() {
     let _ = base; // used implicitly by data construction
 
     let findings = texture_scanner::analyze(&data, "Assets/Textures/evil.png");
-    let has = findings.iter().any(|f| f.id == "POLYGLOT_FILE");
+    let has = findings.iter().any(|f| f.id == FindingId::PolyglotFile);
     assert!(has, "POLYGLOT_FILE not detected for valid PE embedded in PNG; got: {:#?}", findings);
 }
 
@@ -93,7 +91,7 @@ fn zip_embedded_inside_png_is_polyglot() {
     data.extend(vec![0u8; 8]);
 
     let findings = texture_scanner::analyze(&data, "Assets/Textures/evil.png");
-    let has = findings.iter().any(|f| f.id == "POLYGLOT_FILE");
+    let has = findings.iter().any(|f| f.id == FindingId::PolyglotFile);
     assert!(has, "POLYGLOT_FILE not detected for ZIP embedded in PNG; got: {:#?}", findings);
 }
 
@@ -106,7 +104,7 @@ fn high_entropy_texture_flagged() {
     let data: Vec<u8> = (0u8..=255).cycle().take(4096).collect();
 
     let findings = texture_scanner::analyze(&data, "Assets/Textures/noisy.tga");
-    let has = findings.iter().any(|f| f.id == "TEXTURE_HIGH_ENTROPY");
+    let has = findings.iter().any(|f| f.id == FindingId::TextureHighEntropy);
     assert!(has, "TEXTURE_HIGH_ENTROPY not flagged for high-entropy .tga; got: {:#?}", findings);
 }
 
@@ -131,7 +129,7 @@ fn polyglot_audio_with_pe_detected() {
     data.extend_from_slice(&pe_stub);
 
     let findings = audio_scanner::analyze(&data, "Assets/Audio/ambient.wav");
-    let has = findings.iter().any(|f| f.id == "POLYGLOT_FILE");
+    let has = findings.iter().any(|f| f.id == FindingId::PolyglotFile);
     assert!(has, "POLYGLOT_FILE not detected for valid PE embedded in audio; got: {:#?}", findings);
 }
 
@@ -141,7 +139,7 @@ fn low_entropy_audio_flagged() {
     let data = vec![0u8; 1024];
     let findings = audio_scanner::analyze(&data, "Assets/Audio/silent.wav");
 
-    let has = findings.iter().any(|f| f.id == "AUDIO_UNUSUAL_ENTROPY");
+    let has = findings.iter().any(|f| f.id == FindingId::AudioUnusualEntropy);
     assert!(has, "AUDIO_UNUSUAL_ENTROPY not flagged for all-zero audio; got: {:#?}", findings);
 }
 
@@ -161,7 +159,7 @@ GameObject:
     // A clean prefab with no externalObjects or suspicious content
     let suspicious: Vec<_> = findings
         .iter()
-        .filter(|f| f.id == "META_EXTERNAL_REF" || f.id == "PREFAB_INLINE_B64")
+        .filter(|f| f.id == FindingId::MetaExternalRef || f.id == FindingId::PrefabInlineB64)
         .collect();
     assert!(suspicious.is_empty(), "Clean prefab should have no suspicious findings; got: {:#?}", suspicious);
 }
@@ -176,7 +174,7 @@ MonoBehaviour:
     SomeRef: {fileID: 12345, guid: abcdef0123456789abcdef0123456789, type: 3}
 "#;
     let findings = prefab_scanner::analyze(yaml.as_bytes(), "Assets/Prefabs/Linked.prefab");
-    let has = findings.iter().any(|f| f.id == "META_EXTERNAL_REF");
+    let has = findings.iter().any(|f| f.id == FindingId::MetaExternalRef);
     assert!(has, "META_EXTERNAL_REF not flagged; got: {:#?}", findings);
 }
 

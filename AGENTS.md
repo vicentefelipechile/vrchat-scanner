@@ -83,7 +83,7 @@ vrcstorage-scanner/
 │   │   └── metadata/
 │   │       ├── mod.rs          ← analyze_metadata() + pub mod declarations
 │   │       ├── meta_parser.rs  ← GUID, timestamps, externalObjects
-│   │       └── dependency_graph.rs ← DLL_MANY_DEPENDENTS: flags DLLs with > 5 .meta references
+│   │       └── dependency_graph.rs ← FindingId::DllManyDependents: flags DLLs with > 5 .meta references
 │   │
 │   ├── scoring/
 │   │   ├── mod.rs              ← re-exports compute_score, apply_context_reductions, RiskLevel
@@ -93,7 +93,7 @@ vrcstorage-scanner/
 │   │
 │   ├── report/
 │   │   ├── mod.rs
-│   │   ├── finding.rs          ← Finding, Severity (Low/Medium/High/Critical)
+│   │   ├── finding.rs          ← FindingId enum, Finding struct, Severity (Low/Medium/High/Critical)
 │   │   ├── json_reporter.rs    ← to_json(): serializes ScanReport to JSON
 │   │   └── cli_reporter.rs     ← print_report(): colored ANSI output
 │   │
@@ -196,11 +196,16 @@ Input (path or bytes)
 - `compute_score(findings)` → `(u32, RiskLevel)` — sums `finding.points`.
 - `apply_context_reductions(findings: &mut [Finding], context)` — mutates `finding.points`
   in-place based on context. Takes a slice, not a `Vec`, to avoid unnecessary ownership.
-- `AnalysisContext` — three flags: `has_vrchat_sdk`, `is_managed_dotnet`, `in_editor_folder`.
+- `AnalysisContext` — four flags: `has_vrchat_sdk`, `is_managed_dotnet`, `in_editor_folder`,
+  `has_loader_script` (set when `CsAssemblyLoadBytes`, `CsProcessStart`, or `CsFileWrite`
+  findings are present — used to reduce `PolyglotFile` score when no trigger exists).
 
 ### `report`
 
-- `Finding` — atomic result unit: `id`, `severity`, `points`, `location`, `detail`, `context`.
+- `FindingId` — typed enum with one variant per rule (`PascalCase`). Every variant carries a
+  `#[serde(rename = "SCREAMING_SNAKE_CASE")]` attribute so the JSON wire format is identical to
+  the previous string representation. `FindingId` is `Copy + Hash + Eq + PartialEq`.
+- `Finding` — atomic result unit: `id: FindingId`, `severity`, `points`, `location`, `detail`, `context`.
 - `Severity` — `Low | Medium | High | Critical` (impl `PartialOrd`).
 - `ScanReport` — complete structure serializable to JSON.
 
@@ -245,31 +250,45 @@ The `location` parameter is always the internal asset path within the package
 
 ### Creating findings
 
-Always use the `Finding::new()` constructor and optionally `.with_context()`:
+Always use the `Finding::new()` constructor with a **`FindingId` enum variant** and optionally
+`.with_context()`:
 
 ```rust
+use crate::report::{Finding, FindingId, Severity};
+
 Finding::new(
-    "RULE_ID",          // &str — unique identifier in SCREAMING_SNAKE_CASE
-    Severity::High,     // severity level
-    50,                 // risk points
-    location,           // &str — asset path
+    FindingId::CsProcessStart,  // typed enum variant — NOT a raw string
+    Severity::High,             // severity level
+    50,                         // risk points
+    location,                   // &str — asset path
     "Clear description of the finding",
 )
 .with_context(format!("key=value"))   // optional
 ```
 
-**Rule IDs** must be unique, descriptive, and in `SCREAMING_SNAKE_CASE`.
-Conventional prefixes:
+**Never pass a raw `&str` as the first argument.**  All rule IDs are defined as variants in
+`FindingId` (in `src/report/finding.rs`). The enum variant naming convention is `PascalCase`
+and maps to the legacy `SCREAMING_SNAKE_CASE` string via `#[serde(rename)]`.
 
-| Prefix | Area |
-|---|---|
-| `CS_` | C# script |
-| `DLL_` / `PE_` | DLL/PE binary |
-| `META_` | `.meta` files |
-| `TEXTURE_` / `AUDIO_` | Binary assets |
-| `POLYGLOT_` | Polyglot files |
-| `MAGIC_` | Magic byte mismatch |
-| `PATH_` | Suspicious paths |
+**Adding a new rule ID:**
+1. Add a new variant to `FindingId` in `src/report/finding.rs`.
+2. Add the matching `#[serde(rename = "MY_RULE_ID")]` attribute above the variant.
+3. Add the variant to the `Display` `match` arm and to `cli_reporter::human_explanation()`.
+4. Use the new variant in your analysis module.
+5. Add an integration test.
+
+Conventional variant prefixes (PascalCase → SCREAMING_SNAKE_CASE):
+
+| Variant prefix | JSON prefix | Area |
+|---|---|---|
+| `Cs…` | `CS_` | C# script |
+| `Dll…` / `Pe…` | `DLL_` / `PE_` | DLL/PE binary |
+| `Meta…` | `META_` | `.meta` files |
+| `Texture…` / `Audio…` | `TEXTURE_` / `AUDIO_` | Binary assets |
+| `Polyglot…` | `POLYGLOT_` | Polyglot files |
+| `Magic…` | `MAGIC_` | Magic byte mismatch |
+| `Path…` | `PATH_` | Suspicious paths |
+| `Prefab…` | `PREFAB_` | Prefabs / ScriptableObjects |
 
 ### Entropy thresholds
 
@@ -341,11 +360,12 @@ Conventional prefixes:
 
 ### Context reductions (`apply_context_reductions`)
 
-| Finding ID | Condition | Reduction |
+| `FindingId` variant | Condition | Reduction |
 |---|---|---|
-| `CS_HTTP_CLIENT` | `has_vrchat_sdk == true` | 30 → 10 pts |
-| `CS_REFLECTION_EMIT` | `in_editor_folder == true` | 40 → 15 pts |
-| `DLL_OUTSIDE_PLUGINS` | `is_managed_dotnet == true` | N → 0 pts |
+| `FindingId::CsHttpClient` | `has_vrchat_sdk == true` | 30 → 10 pts |
+| `FindingId::CsReflectionEmit` | `in_editor_folder == true` | 40 → 15 pts |
+| `FindingId::DllOutsidePlugins` | `is_managed_dotnet == true` | N → 0 pts |
+| `FindingId::PolyglotFile` | `has_loader_script == false` | 70 → 15 pts |
 
 > **Critical rule:** Context reductions never affect findings with `Critical` severity.
 > They only modify `finding.points`; they never change `finding.severity`.
@@ -419,19 +439,28 @@ Use `is_safe_domain(url: &str) -> bool` to check URLs against the whitelist.
 
 ### Test conventions
 
-- Analysis tests should build minimal input and verify concrete finding IDs:
+- Analysis tests should build minimal input and verify concrete `FindingId` variants:
   ```rust
+  use vrcstorage_scanner::report::FindingId;
+
   let findings = analyze_script(source, "Assets/Scripts/Test.cs");
-  let has = findings.iter().any(|f| f.id == "CS_PROCESS_START");
-  assert!(has, "CS_PROCESS_START not found; got: {:#?}", findings);
+  let has = findings.iter().any(|f| f.id == FindingId::CsProcessStart);
+  assert!(has, "CsProcessStart not found; got: {:#?}", findings);
   ```
 - For polyglot tests: embed the magic byte **inside the file body**, not at the start.
-  Detection **skips the first 16 bytes** (legitimate format header area).
+  Detection **skips the first 16 bytes** (legitimate format header area).  
+  For PE polyglots the validator requires a full DOS+PE structure — see §10 below.
 - For scoring tests: use `compute_score(&findings)` and verify `(score, level)`.
-- "No false positive" tests must ensure that specific IDs do **not** appear:
+- "No false positive" tests must ensure that specific variants do **not** appear:
   ```rust
-  let suspicious: Vec<_> = findings.iter().filter(|f| f.id == "MAGIC_MISMATCH").collect();
+  let suspicious: Vec<_> = findings.iter()
+      .filter(|f| f.id == FindingId::MagicMismatch)
+      .collect();
   assert!(suspicious.is_empty(), "...");
+  ```
+- When constructing `Finding` directly in tests, always use a real `FindingId` variant:
+  ```rust
+  Finding::new(FindingId::PeHighEntropySection, Severity::High, 50, "path", "detail")
   ```
 
 ### Running tests
@@ -470,6 +499,29 @@ for offset in 16..data.len().saturating_sub(3) {
 
 `\bunsafe\s*\{` only detects `unsafe { }` blocks, not the keyword used as a function or method
 modifier (`unsafe fn foo()`, `unsafe void Write(...)`). Use `\bunsafe\b` instead.
+
+### ❌ Using a raw `&str` as a finding ID
+
+The `Finding` struct now holds `id: FindingId`, a typed enum. Passing a plain string literal
+no longer compiles:
+
+```rust
+// ❌ Wrong — does not compile
+Finding::new("CS_PROCESS_START", Severity::Critical, 75, loc, "...");
+
+// ✓ Correct — use the enum variant
+Finding::new(FindingId::CsProcessStart, Severity::Critical, 75, loc, "...");
+```
+
+Similarly, all comparisons in tests must use the variant, not a string:
+
+```rust
+// ❌ Wrong
+findings.iter().any(|f| f.id == "CS_PROCESS_START")
+
+// ✓ Correct
+findings.iter().any(|f| f.id == FindingId::CsProcessStart)
+```
 
 ### ❌ Declaring Regex outside `patterns.rs`
 
@@ -601,4 +653,4 @@ cargo run -- serve --port 9000
 
 ---
 
-_Last updated: 2026-04-19 | Scanner version: 0.1.0 | Cleanup: dependency\_graph integrated, DLL\_MANY\_DEPENDENTS added, CS\_DLLIMPORT severity split, apply\_context\_reductions uses &mut [Finding]_
+_Last updated: 2026-04-20 | Scanner version: 0.1.0 | Refactor: string-based finding IDs replaced by `FindingId` typed enum; `human_explanation()` is now exhaustive at compile time; `AnalysisContext` gains `has_loader_script` flag; 84/84 tests passing._

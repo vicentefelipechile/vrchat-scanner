@@ -87,29 +87,29 @@ Options:
 ```
 vrcstorage-scanner v0.1.0
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Archivo: my_mod.unitypackage
+File:    my_mod.unitypackage
 SHA-256: a3f8c2...
-Tamaño:  1.2 MB
-Tipo:    UnityPackage
+Size:    1.2 MB
+Type:    UnityPackage
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-HALLAZGOS (2 encontrados)
+FINDINGS (2 found)
 ────────────────────────────────────────────
 
-[CRÍTICO +75] Process.Start() detected in C# script
-  Archivo:  Assets/Scripts/Loader.cs
+[CRITICAL +75] Process.Start() detected in C# script
+  File:     Assets/Scripts/Loader.cs
   ID:       CS_PROCESS_START
 
-[MEDIO   +30] HTTP client detected in C# script
-  Archivo:  Assets/Scripts/Updater.cs
+[MEDIUM   +30] HTTP client detected in C# script
+  File:     Assets/Scripts/Updater.cs
   ID:       CS_HTTP_CLIENT
 
 ────────────────────────────────────────────
-Score total: 105
-Nivel:       ■ ALTO
-Acción:      Retain — mandatory manual review
+Total score:   105
+Risk level:    ■ HIGH
+Action:        Retain — mandatory manual review
 ────────────────────────────────────────────
-Tiempo:      38ms
+Duration:      38ms
 ```
 
 ### Exit codes
@@ -141,7 +141,7 @@ vrcstorage-scanner scan my_avatar.unitypackage --output json
   },
   "findings": [
     {
-      "id": "CS_PROCESS_START",
+      "id": "CS_PROCESS_START",   // serialised from FindingId::CsProcessStart
       "severity": "Critical",
       "points": 75,
       "location": "Assets/Scripts/Loader.cs",
@@ -396,14 +396,14 @@ cargo clippy -- -W unused -W dead-code -W unused-imports
 cargo bench
 ```
 
-The integration test suite covers 82 scenarios including:
+The integration test suite covers **84 scenarios** including:
 
 - Clean packages that produce no false positives
 - Malicious DLL patterns (socket imports, W+X sections, high entropy)
 - Obfuscated C# scripts (base64, short identifiers, XOR patterns)
 - Polyglot asset detection (PE/ZIP embedded in PNG or audio files)
 - Metadata anomalies (future timestamps, external references)
-- Scoring pipeline and context reductions
+- Scoring pipeline and context reductions (including polyglot ↔ loader correlation)
 
 ---
 

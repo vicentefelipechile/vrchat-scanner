@@ -1,4 +1,4 @@
-use crate::report::{Finding, Severity};
+use crate::report::{Finding, FindingId, Severity};
 use crate::utils::patterns::{URL_PATTERN, IP_PATTERN, REGISTRY_KEY, SYSTEM_PATH, SHELL_CMD, BASE64_LONG, is_safe_domain};
 
 /// Extract ASCII strings of length >= 6 bytes from raw binary data
@@ -36,7 +36,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         if !found_shell_cmd && SHELL_CMD.is_match(s) {
             findings.push(
                 Finding::new(
-                    "CS_SHELL_STRINGS",
+                    FindingId::CsShellStrings,
                     Severity::High,
                     45,
                     location,
@@ -51,7 +51,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         if !found_sys_path && SYSTEM_PATH.is_match(s) {
             findings.push(
                 Finding::new(
-                    "DLL_STRINGS_SUSPICIOUS_PATH",
+                    FindingId::DllStringsSuspiciousPath,
                     Severity::Low,
                     12,
                     location,
@@ -66,7 +66,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         if REGISTRY_KEY.is_match(s) {
             findings.push(
                 Finding::new(
-                    "DLL_IMPORT_REGISTRY",
+                    FindingId::DllImportRegistry,
                     Severity::Medium,
                     25,
                     location,
@@ -81,7 +81,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
             let url = cap.as_str();
             if !is_safe_domain(url) {
                 findings.push(
-                    Finding::new("CS_URL_UNKNOWN_DOMAIN", Severity::High, 50, location, "URL to unrecognized domain in DLL strings")
+                    Finding::new(FindingId::CsUrlUnknownDomain, Severity::High, 50, location, "URL to unrecognized domain in DLL strings")
                         .with_context(url.chars().take(120).collect::<String>()),
                 );
             }
@@ -90,7 +90,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         // IP addresses
         if IP_PATTERN.is_match(s) && !s.starts_with("127.") && !s.starts_with("0.0.") {
             findings.push(
-                Finding::new("CS_IP_HARDCODED", Severity::High, 50, location, "Hardcoded IP address in DLL strings")
+                Finding::new(FindingId::CsIpHardcoded, Severity::High, 50, location, "Hardcoded IP address in DLL strings")
                     .with_context(s.chars().take(40).collect::<String>()),
             );
         }
@@ -98,7 +98,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         // Hex-encoded PE in strings
         if !found_embedded_hex_pe && s.len() >= 8 && s.to_uppercase().contains("4D5A") {
             findings.push(Finding::new(
-                "POLYGLOT_FILE",
+                FindingId::PolyglotFile,
                 Severity::High,
                 70,
                 location,
@@ -110,7 +110,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         // Long Base64
         if BASE64_LONG.is_match(s) {
             findings.push(
-                Finding::new("CS_BASE64_HIGH_RATIO", Severity::Medium, 25, location, "Long Base64 string in DLL")
+                Finding::new(FindingId::CsBase64HighRatio, Severity::Medium, 25, location, "Long Base64 string in DLL")
                     .with_context(format!("length={}", s.len())),
             );
         }

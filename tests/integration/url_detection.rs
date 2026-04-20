@@ -1,6 +1,7 @@
 //! Integration tests — URL and IP address detection in C# scripts.
 
 use vrcstorage_scanner::analysis::scripts::analyze_script;
+use vrcstorage_scanner::report::FindingId;
 
 // ─────────────────────────────────────────────
 // Unknown domain URLs
@@ -20,7 +21,7 @@ public class Updater {
 }
 "#;
     let findings = analyze_script(source, "Assets/Scripts/Updater.cs");
-    let has = findings.iter().any(|f| f.id == "CS_URL_UNKNOWN_DOMAIN");
+    let has = findings.iter().any(|f| f.id == FindingId::CsUrlUnknownDomain);
     assert!(has, "CS_URL_UNKNOWN_DOMAIN not flagged; got: {:#?}", findings);
 }
 
@@ -38,7 +39,7 @@ public class C2 {
 }
 "#;
     let findings = analyze_script(source, "Assets/Scripts/C2.cs");
-    let has = findings.iter().any(|f| f.id == "CS_IP_HARDCODED");
+    let has = findings.iter().any(|f| f.id == FindingId::CsIpHardcoded);
     assert!(has, "CS_IP_HARDCODED not detected; got: {:#?}", findings);
 }
 
@@ -57,7 +58,7 @@ public class WebPanel : MonoBehaviour {
     // vrchat.com is on the safe-domain whitelist — should NOT produce URL findings
     let url_findings: Vec<_> = findings
         .iter()
-        .filter(|f| f.id == "CS_URL_UNKNOWN_DOMAIN" || f.id == "CS_IP_HARDCODED")
+        .filter(|f| f.id == FindingId::CsUrlUnknownDomain || f.id == FindingId::CsIpHardcoded)
         .collect();
     assert!(
         url_findings.is_empty(),
@@ -76,7 +77,7 @@ public class Info {
     let findings = analyze_script(source, "Assets/Scripts/Info.cs");
     let url_findings: Vec<_> = findings
         .iter()
-        .filter(|f| f.id == "CS_URL_UNKNOWN_DOMAIN" || f.id == "CS_IP_HARDCODED")
+        .filter(|f| f.id == FindingId::CsUrlUnknownDomain || f.id == FindingId::CsIpHardcoded)
         .collect();
     assert!(
         url_findings.is_empty(),
@@ -98,7 +99,7 @@ public class D {
     let findings = analyze_script(source, "Assets/Scripts/D.cs");
     let url_findings: Vec<_> = findings
         .iter()
-        .filter(|f| f.id == "CS_URL_UNKNOWN_DOMAIN")
+        .filter(|f| f.id == FindingId::CsUrlUnknownDomain)
         .collect();
 
     // "malware.example.com" once + "another-bad-domain.net" once = 2 total

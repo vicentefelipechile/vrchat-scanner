@@ -1,4 +1,4 @@
-use crate::report::{Finding, Severity};
+use crate::report::{Finding, FindingId, Severity};
 use crate::utils::patterns::{URL_PATTERN, IP_PATTERN, is_safe_domain};
 
 /// Extract and validate all URLs found in C# source code.
@@ -22,7 +22,7 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         if IP_PATTERN.is_match(url) {
             findings.push(
                 Finding::new(
-                    "CS_IP_HARDCODED",
+                    FindingId::CsIpHardcoded,
                     Severity::High,
                     50,
                     location,
@@ -33,7 +33,7 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
         } else {
             findings.push(
                 Finding::new(
-                    "CS_URL_UNKNOWN_DOMAIN",
+                    FindingId::CsUrlUnknownDomain,
                     Severity::High,
                     50,
                     location,

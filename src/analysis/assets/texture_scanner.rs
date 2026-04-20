@@ -1,4 +1,4 @@
-use crate::report::{Finding, Severity};
+use crate::report::{Finding, FindingId, Severity};
 use crate::utils::shannon_entropy;
 
 // Magic bytes for common image formats
@@ -25,7 +25,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
     if !magic_ok {
         findings.push(
             Finding::new(
-                "MAGIC_MISMATCH",
+                FindingId::MagicMismatch,
                 Severity::High,
                 50,
                 location,
@@ -49,7 +49,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         if entropy > 7.5 {
             findings.push(
                 Finding::new(
-                    "TEXTURE_HIGH_ENTROPY",
+                    FindingId::TextureHighEntropy,
                     Severity::Medium,
                     20,
                     location,
@@ -83,7 +83,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
             if is_valid_pe_header(data, offset) {
                 findings.push(
                     Finding::new(
-                        "POLYGLOT_FILE",
+                        FindingId::PolyglotFile,
                         Severity::High,
                         70,
                         location,
@@ -101,7 +101,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         if window == b"PK\x03\x04" {
             findings.push(
                 Finding::new(
-                    "POLYGLOT_FILE",
+                    FindingId::PolyglotFile,
                     Severity::High,
                     70,
                     location,

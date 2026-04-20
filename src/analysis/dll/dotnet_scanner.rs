@@ -1,4 +1,4 @@
-use crate::report::{Finding, Severity};
+use crate::report::{Finding, FindingId, Severity};
 
 /// Minimal .NET metadata analysis.
 /// Looks for dangerous type/method references in the .NET metadata tables.
@@ -12,7 +12,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
     // Reflection.Emit
     if text.contains("System.Reflection.Emit") || text.contains("ILGenerator") {
         findings.push(Finding::new(
-            "CS_REFLECTION_EMIT",
+            FindingId::CsReflectionEmit,
             Severity::Medium,
             40,
             location,
@@ -23,7 +23,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
     // P/Invoke interop
     if text.contains("System.Runtime.InteropServices") {
         findings.push(Finding::new(
-            "CS_DLLIMPORT_UNKNOWN",
+            FindingId::CsDllimportUnknown,
             Severity::High,
             60,
             location,
@@ -34,7 +34,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
     // Assembly.Load
     if text.contains("Assembly.Load") {
         findings.push(Finding::new(
-            "CS_ASSEMBLY_LOAD_BYTES",
+            FindingId::CsAssemblyLoadBytes,
             Severity::Critical,
             80,
             location,
@@ -45,7 +45,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
     // Process
     if text.contains("System.Diagnostics.Process") {
         findings.push(Finding::new(
-            "CS_PROCESS_START",
+            FindingId::CsProcessStart,
             Severity::Critical,
             75,
             location,
