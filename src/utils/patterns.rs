@@ -1,5 +1,7 @@
 use lazy_static::lazy_static;
 use regex::Regex;
+// Domain whitelist is defined centrally in config.rs
+pub use crate::config::SAFE_DOMAINS;
 
 lazy_static! {
     // URLs in source code
@@ -32,7 +34,7 @@ lazy_static! {
 
     // Path traversal
     pub static ref PATH_TRAVERSAL: Regex =
-        Regex::new(r"(\.\./|\.\.\\)").unwrap();
+        Regex::new(r"(\.\.\/|\.\.\\)").unwrap();
 
     // C# dangerous API patterns
     pub static ref CS_PROCESS_START: Regex =
@@ -80,20 +82,7 @@ lazy_static! {
         Regex::new(r"\b[a-zA-Z_][a-zA-Z0-9_]{0,1}\b").unwrap();
 }
 
-/// Known safe domains (whitelist)
-pub const SAFE_DOMAINS: &[&str] = &[
-    "vrchat.com",
-    "unity3d.com",
-    "unity.com",
-    "microsoft.com",
-    "github.com",
-    "githubusercontent.com",
-    "nuget.org",
-    "visualstudio.com",
-    "windowsupdate.com",
-];
-
-/// Check if a URL's host is in the whitelist
+/// Check if a URL's host is in the whitelist defined in `config::SAFE_DOMAINS`.
 pub fn is_safe_domain(url: &str) -> bool {
     SAFE_DOMAINS.iter().any(|d| url.contains(d))
 }

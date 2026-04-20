@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
+use crate::config::{THRESHOLD_DLL_MANY_DEPENDENTS, PTS_DLL_MANY_DEPENDENTS};
 use crate::report::{Finding, FindingId, Severity};
-
-/// Threshold: a DLL referenced by more than this many assets is considered suspicious.
-const DEPENDENCY_THRESHOLD: usize = 5;
 
 /// Analyze the dependency graph built from `.meta` file cross-references.
 ///
@@ -14,6 +12,7 @@ const DEPENDENCY_THRESHOLD: usize = 5;
 ///
 /// # Returns
 /// A list of findings for DLLs with an abnormally high number of dependents.
+/// Threshold: `config::THRESHOLD_DLL_MANY_DEPENDENTS`.
 pub fn analyze(
     guid_to_path: &HashMap<String, String>,
     dll_guid_count: &HashMap<String, usize>,
@@ -22,7 +21,7 @@ pub fn analyze(
     let mut findings = Vec::new();
 
     for (guid, &count) in dll_guid_count {
-        if count > DEPENDENCY_THRESHOLD {
+        if count > THRESHOLD_DLL_MANY_DEPENDENTS {
             let path = guid_to_path
                 .get(guid)
                 .map(String::as_str)
@@ -32,11 +31,11 @@ pub fn analyze(
                 Finding::new(
                     FindingId::DllManyDependents,
                     Severity::Low,
-                    15,
+                    PTS_DLL_MANY_DEPENDENTS,
                     location,
                     format!(
                         "DLL '{}' is referenced by {} assets (threshold: {})",
-                        path, count, DEPENDENCY_THRESHOLD
+                        path, count, THRESHOLD_DLL_MANY_DEPENDENTS
                     ),
                 )
                 .with_context(format!("guid={guid} dependents={count}")),

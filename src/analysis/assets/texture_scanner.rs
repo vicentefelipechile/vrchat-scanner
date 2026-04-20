@@ -1,5 +1,6 @@
 use crate::report::{Finding, FindingId, Severity};
 use crate::utils::shannon_entropy;
+use crate::config::*;
 
 // Magic bytes for common image formats
 const PNG_MAGIC: &[u8] = &[0x89, 0x50, 0x4E, 0x47];
@@ -27,7 +28,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
             Finding::new(
                 FindingId::MagicMismatch,
                 Severity::High,
-                50,
+                PTS_MAGIC_MISMATCH,
                 location,
                 "Magic bytes don't match the declared file extension",
             )
@@ -46,12 +47,12 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
 
     if !is_natively_compressed {
         let entropy = shannon_entropy(data);
-        if entropy > 7.5 {
+        if entropy > ENTROPY_TEXTURE_HIGH {
             findings.push(
                 Finding::new(
                     FindingId::TextureHighEntropy,
                     Severity::Medium,
-                    20,
+                    PTS_TEXTURE_HIGH_ENTROPY,
                     location,
                     format!("Texture file has high entropy {:.2} (possible embedded payload)", entropy),
                 )
@@ -85,7 +86,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
                     Finding::new(
                         FindingId::PolyglotFile,
                         Severity::High,
-                        70,
+                        PTS_POLYGLOT_FILE,
                         location,
                         "Valid PE header found inside texture file — polyglot payload detected",
                     )
@@ -103,7 +104,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
                 Finding::new(
                     FindingId::PolyglotFile,
                     Severity::High,
-                    70,
+                    PTS_POLYGLOT_FILE,
                     location,
                     "ZIP (PK) header found inside texture file — polyglot payload detected",
                 )

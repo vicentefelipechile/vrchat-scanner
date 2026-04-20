@@ -7,8 +7,9 @@ use rayon::prelude::*;
 
 use crate::ingestion::{AssetType, PackageTree};
 use crate::report::{AssetCounts, Finding, FindingId, Severity};
-use crate::utils::patterns::PATH_TRAVERSAL;
 use crate::scoring::context::AnalysisContext;
+use crate::utils::patterns::PATH_TRAVERSAL;
+use crate::config::*;
 
 /// Run all analysis stages in parallel over the extracted package tree.
 /// Returns a flat list of all findings and an asset count summary.
@@ -44,25 +45,24 @@ pub fn run_all_analyses(tree: &PackageTree) -> (Vec<Finding>, AssetCounts, Analy
                 findings.push(Finding::new(
                     FindingId::PathTraversal,
                     Severity::Critical,
-                    85,
+                    PTS_PATH_TRAVERSAL,
                     loc,
                     "Path traversal (../ or ..\\) detected in asset path",
                 ));
             }
 
             // Check for forbidden extensions
-            let forbidden = ["exe", "bat", "ps1", "sh", "cmd", "vbs", "jar"];
             let ext_lower = std::path::Path::new(loc)
                 .extension()
                 .and_then(|e| e.to_str())
                 .map(|e| e.to_lowercase())
                 .unwrap_or_default();
 
-            if forbidden.contains(&ext_lower.as_str()) {
+            if FORBIDDEN_EXTENSIONS.contains(&ext_lower.as_str()) {
                 findings.push(Finding::new(
                     FindingId::ForbiddenExtension,
                     Severity::Critical,
-                    90,
+                    PTS_FORBIDDEN_EXTENSION,
                     loc,
                     format!("Forbidden file type (.{}) inside the package", ext_lower),
                 ));
@@ -78,7 +78,7 @@ pub fn run_all_analyses(tree: &PackageTree) -> (Vec<Finding>, AssetCounts, Analy
                 findings.push(Finding::new(
                     FindingId::DoubleExtension,
                     Severity::High,
-                    50,
+                    PTS_DOUBLE_EXTENSION,
                     loc,
                     "Double extension detected (e.g. file.png.dll)",
                 ));
@@ -89,7 +89,7 @@ pub fn run_all_analyses(tree: &PackageTree) -> (Vec<Finding>, AssetCounts, Analy
                 findings.push(Finding::new(
                     FindingId::DllOutsidePlugins,
                     Severity::Medium,
-                    35,
+                    PTS_DLL_OUTSIDE_PLUGINS,
                     loc,
                     "DLL found outside Assets/Plugins/ directory",
                 ));
@@ -140,7 +140,7 @@ pub fn run_all_analyses(tree: &PackageTree) -> (Vec<Finding>, AssetCounts, Analy
             findings.push(Finding::new(
                 FindingId::CsNoMeta,
                 Severity::Low,
-                10,
+                PTS_CS_NO_META,
                 &entry.original_path,
                 "C# script without an associated .meta file",
             ));
@@ -148,14 +148,14 @@ pub fn run_all_analyses(tree: &PackageTree) -> (Vec<Finding>, AssetCounts, Analy
     }
 
     // Excessive DLLs
-    if dll_count > 10 {
+    if dll_count > THRESHOLD_EXCESSIVE_DLLS {
         findings.push(
             Finding::new(
                 FindingId::ExcessiveDlls,
                 Severity::Low,
-                15,
+                PTS_EXCESSIVE_DLLS,
                 "package",
-                format!("Package contains an excessive number of DLLs: {}", dll_count),
+                format!("Package contains an excessive number of DLLs: {} (threshold: {})", dll_count, THRESHOLD_EXCESSIVE_DLLS),
             )
             .with_context(format!("count={}", dll_count)),
         );

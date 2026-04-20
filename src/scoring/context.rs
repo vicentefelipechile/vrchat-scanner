@@ -1,9 +1,12 @@
+use crate::config::{REDUCE_HTTP_VRC, REDUCE_REFLECT_EDITOR, REDUCE_POLYGLOT_NO_LOADER};
 use crate::report::{Finding, FindingId, Severity};
 
 /// Apply context-aware score reductions to findings.
 ///
 /// This mutates the points of relevant findings when context
 /// (e.g. VRChat SDK usage, Editor folder placement) justifies it.
+///
+/// Reduction amounts are defined in `src/config.rs`.
 pub fn apply_context_reductions(findings: &mut [Finding], source_context: &AnalysisContext) {
     for finding in findings.iter_mut() {
         // Critical-severity findings are never reduced (invariant from AGENTS.md)
@@ -12,16 +15,16 @@ pub fn apply_context_reductions(findings: &mut [Finding], source_context: &Analy
         }
 
         match finding.id {
-            // HTTP in VRChat scripts is expected — reduce from 30 to 10
+            // HTTP in VRChat scripts is expected — reduce to REDUCE_HTTP_VRC
             FindingId::CsHttpClient if source_context.has_vrchat_sdk => {
-                finding.points = finding.points.min(10);
+                finding.points = finding.points.min(REDUCE_HTTP_VRC);
                 finding.context = Some(
                     "Reduced: UnityWebRequest expected in VRChat SDK context".to_string(),
                 );
             }
             // Reflection.Emit in Editor folder is legitimate
             FindingId::CsReflectionEmit if source_context.in_editor_folder => {
-                finding.points = finding.points.min(15);
+                finding.points = finding.points.min(REDUCE_REFLECT_EDITOR);
                 finding.context = Some(
                     "Reduced: Reflection.Emit in Editor/ folder (legitimate editor tool)".to_string(),
                 );
@@ -33,16 +36,9 @@ pub fn apply_context_reductions(findings: &mut [Finding], source_context: &Analy
                     "Reduced: managed .NET DLL in Plugins/ without dangerous imports".to_string(),
                 );
             }
-            // Polyglot file without a script that can load/execute byte arrays.
-            //
-            // A texture or audio file embedding a PE payload is only exploitable
-            // if a C# loader script reads its raw bytes and calls Assembly.Load,
-            // File.WriteAllBytes + Process.Start, or similar.  Without such a
-            // script in the same package the payload is inert — analogous to
-            // having a payload but no trigger.  Reduce from 70 → 15 pts
-            // (kept above zero because the anomaly is still worth noting).
+            // Polyglot payload without a loader script is inert — reduce to REDUCE_POLYGLOT_NO_LOADER
             FindingId::PolyglotFile if !source_context.has_loader_script => {
-                finding.points = 15;
+                finding.points = REDUCE_POLYGLOT_NO_LOADER;
                 finding.context = Some(
                     "Reduced: no loader script (Assembly.Load / Process.Start / File.Write) \
                      found in this package — embedded payload cannot self-execute"
@@ -66,6 +62,6 @@ pub struct AnalysisContext {
     /// Package contains a script capable of loading or executing byte arrays
     /// (CsAssemblyLoadBytes, CsProcessStart, or CsFileWrite findings).
     /// When false, PolyglotFile findings are considered inert and their score
-    /// is reduced significantly.
+    /// is reduced to `config::REDUCE_POLYGLOT_NO_LOADER`.
     pub has_loader_script: bool,
 }

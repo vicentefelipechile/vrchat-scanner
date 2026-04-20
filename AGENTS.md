@@ -35,6 +35,7 @@ executing the content.
 |---|---|---|
 | CLI scan | `vrcstorage-scanner scan <FILE>` | Local file analysis |
 | CLI JSON | `vrcstorage-scanner scan <FILE> --output json` | CI / script integration |
+| Drag-and-drop | `vrcstorage-scanner <FILE>` | Non-technical users (pauses on exit) |
 | HTTP server | `vrcstorage-scanner serve --port 8080` | Cloudflare Containers (R2 download) |
 
 **Server output:** `POST /scan` with body `{ "r2_url": "...", "file_id": "...", "expected_sha256": "..." }`.
@@ -49,11 +50,15 @@ vrcstorage-scanner/
 ├── Cargo.toml                  ← crate dependencies and configuration
 ├── Cargo.lock
 ├── AGENTS.md                   ← this file
+├── README.md                   ← user-facing documentation
+├── CONFIG.md                   ← non-technical guide to tuning src/config.rs
 ├── vrcstorage-scanner-workflow.md  ← design specification (source of truth)
 │
 ├── src/
 │   ├── lib.rs                  ← re-exports all modules (used by tests and integrations)
 │   ├── main.rs                 ← CLI with clap: `scan` and `serve` subcommands
+│   │                              IMPORTANT: must declare all modules that use crate::config
+│   ├── config.rs               ← SINGLE SOURCE OF TRUTH for all tuneable constants
 │   ├── pipeline.rs             ← full flow orchestration (stages 0-7)
 │   │
 │   ├── ingestion/              ← Stages 0 and 1: ingestion and extraction
@@ -77,8 +82,8 @@ vrcstorage-scanner/
 │   │   │   └── obfuscation.rs      ← base64 ratio, short identifiers, XOR, unicode escapes
 │   │   ├── assets/
 │   │   │   ├── mod.rs          ← analyze_asset(): dispatches by AssetType
-│   │   │   ├── texture_scanner.rs  ← magic bytes, entropy, byte-by-byte polyglot scan
-│   │   │   ├── audio_scanner.rs    ← entropy, byte-by-byte polyglot scan
+│   │   │   ├── texture_scanner.rs  ← magic bytes, entropy (skips PNG/JPEG/WebP), byte-by-byte polyglot scan with PE validation
+│   │   │   ├── audio_scanner.rs    ← entropy (compressed formats exempt), byte-by-byte polyglot scan with PE validation
 │   │   │   └── prefab_scanner.rs   ← YAML parsing, externalObjects, inline Base64
 │   │   └── metadata/
 │   │       ├── mod.rs          ← analyze_metadata() + pub mod declarations
@@ -104,7 +109,7 @@ vrcstorage-scanner/
 │       ├── mod.rs              ← re-exports shannon_entropy, ScannerError, Result
 │       ├── entropy.rs          ← shannon_entropy(&[u8]) → f64
 │       ├── error.rs            ← ScannerError (thiserror), Result alias
-│       └── patterns.rs         ← lazy_static! centralized Regex + SAFE_DOMAINS + is_safe_domain()
+│       └── patterns.rs         ← lazy_static! centralized Regex + re-exports SAFE_DOMAINS from config
 │
 ├── tests/
 │   ├── integration.rs          ← entry point (includes integration/ modules)
@@ -162,14 +167,28 @@ Input (path or bytes)
 
 ## 4. Modules and Responsibilities
 
+### `config`
+
+- **Single source of truth** for every tuneable constant: point values (`PTS_*`), entropy thresholds
+  (`ENTROPY_*`), score band boundaries (`SCORE_*_MAX`), context reductions (`REDUCE_*`),
+  package-level thresholds (`THRESHOLD_*`), obfuscation parameters (`OBFUSC_*`), forbidden
+  extensions (`FORBIDDEN_EXTENSIONS`), and the domain whitelist (`SAFE_DOMAINS`).
+- Declared as `pub mod config` in **both** `lib.rs` and `main.rs`. This is required because the
+  project has two crate roots: `lib.rs` (used by tests) and `main.rs` (the binary). Omitting
+  `mod config` from either root causes `E0432` import errors in that compilation context.
+- See `CONFIG.md` for a non-technical guide to every tuneable value.
+
 ### `ingestion`
 
 - `FileType` — top-level file type detected by magic bytes.
-- `AssetType` — type of each asset within the package (classified by extension).
-- `PackageEntry` — one entry in the extracted tree: `guid`, `original_path`, `bytes`, `meta_content`.
-- `PackageTree` — collection of `PackageEntry` indexed by GUID.
+- `AssetType` — type of each asset within the package (classified by extension):
+  `Script`, `Dll`, `Shader`, `Prefab`, `ScriptableObject`, `Texture`, `Audio`,
+  `AnimationClip`, `Meta`, `Other(String)`.
+- `PackageEntry` — one entry in the extracted tree: `original_path`, `asset_type`, `bytes`, `meta_content`.
+- `PackageTree` — collection of `PackageEntry` indexed by GUID (keyed `String → PackageEntry`).
 - `extract()` — supports `.unitypackage` (gzip TAR or plain TAR) and `.zip`. Direct files are
-  wrapped in a generic `PackageEntry`.
+  wrapped in a generic `PackageEntry`. Also hydrates entries that have a `pathname` but no
+  asset bytes, so orphan `.cs` files are detected for `CS_NO_META`.
 
 ### `analysis`
 
@@ -177,9 +196,9 @@ Input (path or bytes)
 - Parallel sub-modules: `dll`, `scripts`, `assets`, `metadata`.
 - After the parallel pass, a sequential global post-pass runs:
   - `CS_NO_META` — scripts without an associated `.meta` file.
-  - `EXCESSIVE_DLLS` — packages with more than 10 DLLs.
+  - `EXCESSIVE_DLLS` — packages with more than `THRESHOLD_EXCESSIVE_DLLS` DLLs.
   - `DLL_MANY_DEPENDENTS` — via `metadata::dependency_graph::analyze()`, built from `.meta`
-    cross-references already in memory.
+    cross-references already in memory (GUID lines in `.meta` files).
 - **Do not modify** `run_all_analyses` to add type-specific analysis logic; add it inside the
   corresponding sub-module instead.
 
@@ -189,16 +208,20 @@ Input (path or bytes)
   `(MetaInfo, Vec<Finding>)`. Detects `META_EXTERNAL_REF` and `META_FUTURE_TIMESTAMP`.
 - `dependency_graph::analyze(guid_to_path, dll_guid_count, location)` — global post-pass that
   counts how many `.meta` files reference each DLL GUID and flags those above the threshold
-  with `DLL_MANY_DEPENDENTS` (threshold: 5, `Severity::Low`, 15 pts).
+  with `DLL_MANY_DEPENDENTS` (threshold: `THRESHOLD_DLL_MANY_DEPENDENTS` = 5,
+  `Severity::Low`, `PTS_DLL_MANY_DEPENDENTS` = 15 pts).
 
 ### `scoring`
 
 - `compute_score(findings)` → `(u32, RiskLevel)` — sums `finding.points`.
 - `apply_context_reductions(findings: &mut [Finding], context)` — mutates `finding.points`
   in-place based on context. Takes a slice, not a `Vec`, to avoid unnecessary ownership.
-- `AnalysisContext` — four flags: `has_vrchat_sdk`, `is_managed_dotnet`, `in_editor_folder`,
-  `has_loader_script` (set when `CsAssemblyLoadBytes`, `CsProcessStart`, or `CsFileWrite`
-  findings are present — used to reduce `PolyglotFile` score when no trigger exists).
+- `AnalysisContext` — four flags:
+  - `has_vrchat_sdk` — any script uses `using VRC.SDK3`, `using UdonSharp`, or `using VRC.Udon`.
+  - `is_managed_dotnet` — DLL has a CLR header (managed .NET assembly).
+  - `in_editor_folder` — asset is inside an `Editor/` folder.
+  - `has_loader_script` — set when `CsAssemblyLoadBytes`, `CsProcessStart`, or `CsFileWrite`
+    findings are present. Used to reduce `PolyglotFile` score when no trigger exists.
 
 ### `report`
 
@@ -214,10 +237,32 @@ Input (path or bytes)
 - `shannon_entropy(data: &[u8]) -> f64` — Shannon entropy. Returns `0.0` for empty slices.
 - `ScannerError` — domain error enum (uses `thiserror`).
 - `patterns.rs` — **all `Regex` used in the project must live here** as `lazy_static!`.
+  Also re-exports `SAFE_DOMAINS` from `crate::config` so callers only need one import.
 
 ---
 
 ## 5. Code Conventions
+
+### Dual crate root — critical rule
+
+The project compiles as **both a library** (`lib.rs`) and a **binary** (`main.rs`). Every module
+that is needed in the binary must be declared with `mod <name>;` in **`main.rs`**. Currently
+these are:
+
+```rust
+// src/main.rs
+mod analysis;
+mod config;   // ← REQUIRED — all modules use crate::config::* from the binary context
+mod ingestion;
+mod pipeline;
+mod report;
+mod scoring;
+mod server;
+mod utils;
+```
+
+Omitting `mod config;` from `main.rs` produces 13 `E0432` errors because `crate::config` is
+not resolvable in the binary compilation context even though `lib.rs` already declares it.
 
 ### Public analysis function signatures
 
@@ -259,7 +304,7 @@ use crate::report::{Finding, FindingId, Severity};
 Finding::new(
     FindingId::CsProcessStart,  // typed enum variant — NOT a raw string
     Severity::High,             // severity level
-    50,                         // risk points
+    50,                         // risk points (prefer config constants: PTS_*)
     location,                   // &str — asset path
     "Clear description of the finding",
 )
@@ -274,8 +319,9 @@ and maps to the legacy `SCREAMING_SNAKE_CASE` string via `#[serde(rename)]`.
 1. Add a new variant to `FindingId` in `src/report/finding.rs`.
 2. Add the matching `#[serde(rename = "MY_RULE_ID")]` attribute above the variant.
 3. Add the variant to the `Display` `match` arm and to `cli_reporter::human_explanation()`.
-4. Use the new variant in your analysis module.
-5. Add an integration test.
+4. Add the corresponding `PTS_*` constant to `src/config.rs`.
+5. Use the new variant and constant in your analysis module.
+6. Add an integration test.
 
 Conventional variant prefixes (PascalCase → SCREAMING_SNAKE_CASE):
 
@@ -292,66 +338,177 @@ Conventional variant prefixes (PascalCase → SCREAMING_SNAKE_CASE):
 
 ### Entropy thresholds
 
-| Context | Threshold | Finding |
-|---|---|---|
-| PE section | ≥ 7.2 | `PE_HIGH_ENTROPY_SECTION` |
-| PE section (suspicious) | ≥ 6.8 and < 7.2 | `PE_HIGH_ENTROPY_SECTION` (Medium, 20 pts) |
-| Texture | > 7.5 | `TEXTURE_HIGH_ENTROPY` |
-| Audio | outside `5.0..=7.9` | `AUDIO_UNUSUAL_ENTROPY` |
+| Context | Threshold | Constant | Finding |
+|---|---|---|---|
+| PE section (High) | ≥ 7.2 | `ENTROPY_PE_HIGH` | `PE_HIGH_ENTROPY_SECTION` (High, 55 pts) |
+| PE section (Medium) | ≥ 6.8 and < 7.2 | `ENTROPY_PE_SUSPICIOUS` | `PE_HIGH_ENTROPY_SECTION` (Medium, 20 pts) |
+| Texture (uncompressed only) | > 7.5 | `ENTROPY_TEXTURE_HIGH` | `TEXTURE_HIGH_ENTROPY` |
+| Audio uncompressed | outside `5.0..=7.9` | `ENTROPY_AUDIO_MIN/MAX` | `AUDIO_UNUSUAL_ENTROPY` |
+| Audio compressed (mp3/ogg/aac/flac) | < 4.0 only | — | `AUDIO_UNUSUAL_ENTROPY` |
+
+**Natively-compressed format exemptions (false-positive prevention):**
+- **Textures**: PNG, JPEG, WebP are **exempt** from entropy checks (DEFLATE/lossy compression
+  naturally saturates entropy at ~7.8–8.0).
+- **Audio**: MP3, OGG, AAC, FLAC, Opus, M4A are **exempt** from the upper entropy bound
+  (codec compression pushes entropy near 8.0 legitimately).
 
 ---
 
 ## 6. Finding System
 
+### All FindingId variants (complete list)
+
+The following is the definitive list of `FindingId` variants as they exist in
+`src/report/finding.rs`, grouped by category.
+
+**Structural / path**
+- `PathTraversal` → `PATH_TRAVERSAL`
+- `ForbiddenExtension` → `FORBIDDEN_EXTENSION`
+- `DoubleExtension` → `DOUBLE_EXTENSION`
+
+**DLL placement / package level**
+- `DllOutsidePlugins` → `DLL_OUTSIDE_PLUGINS`
+- `DllManyDependents` → `DLL_MANY_DEPENDENTS`
+- `ExcessiveDlls` → `EXCESSIVE_DLLS`
+
+**C# script — Critical**
+- `CsProcessStart` → `CS_PROCESS_START`
+- `CsAssemblyLoadBytes` → `CS_ASSEMBLY_LOAD_BYTES` *(also used for LoadFile/LoadFrom)*
+
+**C# script — High**
+- `CsFileWrite` → `CS_FILE_WRITE`
+- `CsBinaryFormatter` → `CS_BINARY_FORMATTER`
+- `CsDllimportUnknown` → `CS_DLLIMPORT_UNKNOWN` *(used for both known and unknown DLL imports)*
+- `CsShellStrings` → `CS_SHELL_STRINGS`
+- `CsUrlUnknownDomain` → `CS_URL_UNKNOWN_DOMAIN`
+- `CsIpHardcoded` → `CS_IP_HARDCODED`
+- `CsUnicodeEscapes` → `CS_UNICODE_ESCAPES`
+
+**C# script — Medium**
+- `CsReflectionEmit` → `CS_REFLECTION_EMIT`
+- `CsHttpClient` → `CS_HTTP_CLIENT`
+- `CsUnsafeBlock` → `CS_UNSAFE_BLOCK`
+- `CsRegistryAccess` → `CS_REGISTRY_ACCESS`
+- `CsEnvironmentAccess` → `CS_ENVIRONMENT_ACCESS`
+- `CsMarshalOps` → `CS_MARSHAL_OPS`
+- `CsBase64HighRatio` → `CS_BASE64_HIGH_RATIO`
+- `CsXorDecryption` → `CS_XOR_DECRYPTION`
+
+**C# script — Low**
+- `CsObfuscatedIdentifiers` → `CS_OBFUSCATED_IDENTIFIERS`
+- `CsNoMeta` → `CS_NO_META`
+
+**PE/DLL binary**
+- `PeInvalidHeader` → `PE_INVALID_HEADER`
+- `PeParseError` → `PE_PARSE_ERROR`
+- `PeHighEntropySection` → `PE_HIGH_ENTROPY_SECTION`
+- `PeUnnamedSection` → `PE_UNNAMED_SECTION`
+- `PeWriteExecuteSection` → `PE_WRITE_EXECUTE_SECTION`
+- `PeInflatedSection` → `PE_INFLATED_SECTION`
+
+**Import table (DLL IAT)**
+- `DllImportCreateprocess` → `DLL_IMPORT_CREATEPROCESS`
+- `DllImportCreateremotethread` → `DLL_IMPORT_CREATEREMOTETHREAD`
+- `DllImportSockets` → `DLL_IMPORT_SOCKETS`
+- `DllImportInternet` → `DLL_IMPORT_INTERNET`
+- `DllImportWriteProcessMem` → `DLL_IMPORT_WRITE_PROCESS_MEM`
+- `DllImportVirtualAlloc` → `DLL_IMPORT_VIRTUAL_ALLOC`
+- `DllImportLoadlibrary` → `DLL_IMPORT_LOADLIBRARY`
+- `DllImportGetprocaddress` → `DLL_IMPORT_GETPROCADDRESS`
+- `DllImportFileOps` → `DLL_IMPORT_FILE_OPS`
+- `DllImportRegistry` → `DLL_IMPORT_REGISTRY`
+- `DllImportCrypto` → `DLL_IMPORT_CRYPTO`
+- `DllImportSysinfo` → `DLL_IMPORT_SYSINFO`
+
+**DLL string analysis**
+- `DllStringsSuspiciousPath` → `DLL_STRINGS_SUSPICIOUS_PATH`
+
+**Asset scanners**
+- `MagicMismatch` → `MAGIC_MISMATCH`
+- `TextureHighEntropy` → `TEXTURE_HIGH_ENTROPY`
+- `AudioUnusualEntropy` → `AUDIO_UNUSUAL_ENTROPY`
+- `PolyglotFile` → `POLYGLOT_FILE`
+
+**Metadata**
+- `MetaExternalRef` → `META_EXTERNAL_REF`
+- `MetaFutureTimestamp` → `META_FUTURE_TIMESTAMP`
+
+**Prefab / ScriptableObject**
+- `PrefabExcessiveGuids` → `PREFAB_EXCESSIVE_GUIDS`
+- `PrefabInlineB64` → `PREFAB_INLINE_B64`
+- `PrefabManyScripts` → `PREFAB_MANY_SCRIPTS`
+
 ### Reference scoring table
 
-| Signal | ID | Severity | Points |
+Points come from the `PTS_*` constants in `src/config.rs` — never hardcode them in analysis
+modules.
+
+| Signal | ID | Sev | Pts constant |
 |---|---|---|---|
-| Executable (`.exe`, `.bat`, `.ps1`, `.sh`) inside the package | `FORBIDDEN_EXTENSION` | Critical | 90 |
-| Path traversal (`../`) | `PATH_TRAVERSAL` | Critical | 85 |
-| `Assembly.Load(bytes)` in C# | `CS_ASSEMBLY_LOAD_BYTES` | Critical | 80 |
-| `Process.Start()` in C# | `CS_PROCESS_START` | Critical | 75 |
-| Polyglot file detected | `POLYGLOT_FILE` | High | 70 |
-| `[DllImport]` **unknown** DLL in C# | `CS_DLLIMPORT_UNKNOWN` | High | 60 |
-| Direct socket import (`ws2_32`) | `DLL_IMPORT_SOCKET` | High | 60 |
-| PE section entropy ≥ 7.2 | `PE_HIGH_ENTROPY_SECTION` | High | 55 |
-| URL to unknown domain / hardcoded IP | `CS_URL_UNKNOWN_DOMAIN` / `CS_IP_HARDCODED` | High | 50 |
-| Magic bytes don't match extension | `MAGIC_MISMATCH` | Medium | 50 |
-| Double extension (e.g. `file.png.dll`) | `DOUBLE_EXTENSION` | High | 50 |
-| `BinaryFormatter` in C# | `CS_BINARY_FORMATTER` | High | 45 |
-| Shell command strings in DLL/C# | `CS_SHELL_STRINGS` | High | 45 |
-| `[DllImport]` **known** system DLL in C# | `CS_DLLIMPORT_UNKNOWN` | Medium | 45 |
-| File write/delete operations in C# | `CS_FILE_WRITE` | High | 40 |
-| PE section W+X (writable + executable) | `PE_WRITE_EXECUTE_SECTION` | High | 40 |
-| `System.Reflection.Emit` in C# | `CS_REFLECTION_EMIT` | Medium | 40 |
-| DLL outside `Assets/Plugins/` | `DLL_OUTSIDE_PLUGINS` | Medium | 35 |
-| Registry access in C# | `CS_REGISTRY_ACCESS` | Medium | 35 |
-| HTTP/WebClient in C# | `CS_HTTP_CLIENT` | Medium | 30 |
-| `unsafe` code in C# | `CS_UNSAFE_BLOCK` | Medium | 30 |
-| Reference to external asset not included | `META_EXTERNAL_REF` | Medium | 25 |
-| Long Base64 string in DLL/script | `CS_BASE64_HIGH_RATIO` | Medium | 25 |
-| Marshal ops in C# | `CS_MARSHAL_OPS` | Medium | 25 |
-| PE section entropy 6.8–7.2 (suspicious) | `PE_HIGH_ENTROPY_SECTION` | Medium | 20 |
-| Future timestamp in `.meta` | `META_FUTURE_TIMESTAMP` | Medium | 20 |
-| High entropy in texture | `TEXTURE_HIGH_ENTROPY` | Medium | 20 |
-| PE section without a name | `PE_UNNAMED_SECTION` | Medium | 20 |
-| PE virtual size >> raw size (inflated) | `PE_INFLATED_SECTION` | Medium | 20 |
-| DLL referenced by > 5 other assets | `DLL_MANY_DEPENDENTS` | Low | 15 |
-| More than 10 DLLs in the package | `EXCESSIVE_DLLS` | Low | 15 |
-| Obfuscated identifiers (short names) | `CS_OBFUSCATED_IDENTIFIERS` | Low | 15 |
-| Suspicious system path in DLL strings | `DLL_STRINGS_SUSPICIOUS_PATH` | Low | 12 |
-| Windows registry path in DLL strings | `DLL_IMPORT_REGISTRY` | Medium | 25 |
-| Environment variable access in C# | `CS_ENVIRONMENT_ACCESS` | Medium | 15 |
-| C# script without `.meta` | `CS_NO_META` | Low | 10 |
+| Executable inside package | `FORBIDDEN_EXTENSION` | Critical | `PTS_FORBIDDEN_EXTENSION` = 90 |
+| Path traversal (`../`) | `PATH_TRAVERSAL` | Critical | `PTS_PATH_TRAVERSAL` = 85 |
+| `Assembly.Load(byte[])` in C# | `CS_ASSEMBLY_LOAD_BYTES` | Critical | `PTS_CS_ASSEMBLY_LOAD_BYTES` = 80 |
+| CreateProcess / ShellExecute (IAT) | `DLL_IMPORT_CREATEPROCESS` | Critical | `PTS_DLL_IMPORT_CREATEPROCESS` = 80 |
+| `Process.Start()` in C# | `CS_PROCESS_START` | Critical | `PTS_CS_PROCESS_START` = 75 |
+| CreateRemoteThread (IAT) | `DLL_IMPORT_CREATEREMOTETHREAD` | Critical | `PTS_DLL_IMPORT_CREATEREMOTETHREAD` = 75 |
+| Polyglot file detected | `POLYGLOT_FILE` | High | `PTS_POLYGLOT_FILE` = 70 |
+| `Assembly.LoadFile/LoadFrom()` | `CS_ASSEMBLY_LOAD_BYTES` | Critical | `PTS_CS_ASSEMBLY_LOAD_FILE` = 60 |
+| Unknown `[DllImport]` | `CS_DLLIMPORT_UNKNOWN` | High | `PTS_CS_DLLIMPORT_UNKNOWN` = 60 |
+| Raw socket import (ws2_32) | `DLL_IMPORT_SOCKETS` | High | `PTS_DLL_IMPORT_SOCKETS` = 60 |
+| URL to unknown domain / hardcoded IP | `CS_URL_UNKNOWN_DOMAIN` / `CS_IP_HARDCODED` | High | `PTS_CS_URL_UNKNOWN_DOMAIN` = 50, `PTS_CS_IP_HARDCODED` = 50 |
+| Magic bytes mismatch | `MAGIC_MISMATCH` | High | `PTS_MAGIC_MISMATCH` = 50 |
+| Double extension | `DOUBLE_EXTENSION` | High | `PTS_DOUBLE_EXTENSION` = 50 |
+| PE section entropy ≥ 7.2 | `PE_HIGH_ENTROPY_SECTION` | High | `PTS_PE_HIGH_ENTROPY_HIGH` = 55 |
+| WinInet/WinHTTP import | `DLL_IMPORT_INTERNET` | High | `PTS_DLL_IMPORT_INTERNET` = 45 |
+| WriteProcessMemory import | `DLL_IMPORT_WRITE_PROCESS_MEM` | High | `PTS_DLL_IMPORT_WRITE_PROCESS_MEM` = 45 |
+| `BinaryFormatter` in C# | `CS_BINARY_FORMATTER` | High | `PTS_CS_BINARY_FORMATTER` = 45 |
+| Shell command strings | `CS_SHELL_STRINGS` | High | `PTS_CS_SHELL_STRINGS` = 45 |
+| Known system `[DllImport]` | `CS_DLLIMPORT_UNKNOWN` | Medium | `PTS_CS_DLLIMPORT_KNOWN` = 45 |
+| File write/delete in C# | `CS_FILE_WRITE` | High | `PTS_CS_FILE_WRITE` = 40 |
+| PE section W+X | `PE_WRITE_EXECUTE_SECTION` | High | `PTS_PE_WRITE_EXECUTE_SECTION` = 40 |
+| `System.Reflection.Emit` | `CS_REFLECTION_EMIT` | Medium | `PTS_CS_REFLECTION_EMIT` = 40 |
+| DLL outside `Assets/Plugins/` | `DLL_OUTSIDE_PLUGINS` | Medium | `PTS_DLL_OUTSIDE_PLUGINS` = 35 |
+| Windows Registry access (C#) | `CS_REGISTRY_ACCESS` | Medium | `PTS_CS_REGISTRY_ACCESS` = 35 |
+| Unicode escape obfuscation | `CS_UNICODE_ESCAPES` | High | `PTS_CS_UNICODE_ESCAPES` = 30 |
+| HTTP/WebClient in C# | `CS_HTTP_CLIENT` | Medium | `PTS_CS_HTTP_CLIENT` = 30 |
+| `unsafe` code in C# | `CS_UNSAFE_BLOCK` | Medium | `PTS_CS_UNSAFE_BLOCK` = 30 |
+| Registry APIs (IAT) | `DLL_IMPORT_REGISTRY` | Medium | `PTS_DLL_IMPORT_REGISTRY` = 25 |
+| External `.meta` reference | `META_EXTERNAL_REF` | Medium | `PTS_META_EXTERNAL_REF` = 25 |
+| Long Base64 blob | `CS_BASE64_HIGH_RATIO` | Medium | `PTS_CS_BASE64_HIGH_RATIO` = 25 |
+| Marshal ops in C# | `CS_MARSHAL_OPS` | Medium | `PTS_CS_MARSHAL_OPS` = 25 |
+| VirtualAlloc import | `DLL_IMPORT_VIRTUAL_ALLOC` | High | `PTS_DLL_IMPORT_VIRTUAL_ALLOC` = 35 |
+| XOR decryption pattern | `CS_XOR_DECRYPTION` | Medium | `PTS_CS_XOR_DECRYPTION` = 20 |
+| PE section entropy 6.8–7.2 | `PE_HIGH_ENTROPY_SECTION` | Medium | `PTS_PE_HIGH_ENTROPY_MEDIUM` = 20 |
+| Future timestamp in `.meta` | `META_FUTURE_TIMESTAMP` | Medium | `PTS_META_FUTURE_TIMESTAMP` = 20 |
+| High entropy in texture | `TEXTURE_HIGH_ENTROPY` | Medium | `PTS_TEXTURE_HIGH_ENTROPY` = 20 |
+| PE unnamed section | `PE_UNNAMED_SECTION` | Medium | `PTS_PE_UNNAMED_SECTION` = 20 |
+| PE inflated section | `PE_INFLATED_SECTION` | Medium | `PTS_PE_INFLATED_SECTION` = 20 |
+| LoadLibrary import | `DLL_IMPORT_LOADLIBRARY` | Low | `PTS_DLL_IMPORT_LOADLIBRARY` = 25 |
+| GetProcAddress import | `DLL_IMPORT_GETPROCADDRESS` | Low | `PTS_DLL_IMPORT_GETPROCADDRESS` = 20 |
+| File ops import (DeleteFile) | `DLL_IMPORT_FILE_OPS` | Low | `PTS_DLL_IMPORT_FILE_OPS` = 20 |
+| Crypto import | `DLL_IMPORT_CRYPTO` | Low | `PTS_DLL_IMPORT_CRYPTO` = 20 |
+| PE invalid header | `PE_INVALID_HEADER` | Low | `PTS_PE_INVALID_HEADER` = 15 |
+| DLL referenced by > 5 assets | `DLL_MANY_DEPENDENTS` | Low | `PTS_DLL_MANY_DEPENDENTS` = 15 |
+| More than 10 DLLs | `EXCESSIVE_DLLS` | Low | `PTS_EXCESSIVE_DLLS` = 15 |
+| Obfuscated identifiers | `CS_OBFUSCATED_IDENTIFIERS` | Low | `PTS_CS_OBFUSCATED_IDENTIFIERS` = 15 |
+| Environment variable access (C#) | `CS_ENVIRONMENT_ACCESS` | Medium | `PTS_CS_ENVIRONMENT_ACCESS` = 15 |
+| Suspicious path in DLL strings | `DLL_STRINGS_SUSPICIOUS_PATH` | Low | `PTS_DLL_STRINGS_SUSPICIOUS_PATH` = 12 |
+| Sysinfo import (GetComputerName) | `DLL_IMPORT_SYSINFO` | Low | `PTS_DLL_IMPORT_SYSINFO` = 8 |
+| Audio unusual entropy | `AUDIO_UNUSUAL_ENTROPY` | Low | `PTS_AUDIO_UNUSUAL_ENTROPY` = 8 |
+| Inline Base64 in prefab | `PREFAB_INLINE_B64` | Low | `PTS_PREFAB_INLINE_B64` = 8 |
+| C# script without `.meta` | `CS_NO_META` | Low | `PTS_CS_NO_META` = 10 |
+| PE parse error | `PE_PARSE_ERROR` | Low | `PTS_PE_PARSE_ERROR` = 5 |
+| Prefab excessive GUIDs | `PREFAB_EXCESSIVE_GUIDS` | Low | `PTS_PREFAB_EXCESSIVE_GUIDS` = 5 |
+| Prefab many scripts | `PREFAB_MANY_SCRIPTS` | Low | `PTS_PREFAB_MANY_SCRIPTS` = 5 |
 
 ### Final risk classification
 
 | Score | Level | Action |
 |---|---|---|
-| 0–30 | `Clean` | Auto-publish |
-| 31–60 | `Low` | Publish with audit note |
-| 61–100 | `Medium` | Manual review recommended |
-| 101–150 | `High` | Retain — mandatory manual review |
+| 0 – `SCORE_CLEAN_MAX` (30) | `Clean` | Auto-publish |
+| 31 – `SCORE_LOW_MAX` (60) | `Low` | Publish with audit note |
+| 61 – `SCORE_MEDIUM_MAX` (100) | `Medium` | Manual review recommended |
+| 101 – `SCORE_HIGH_MAX` (150) | `High` | Retain — mandatory manual review |
 | 151+ | `Critical` | Reject; CLI exit code 2 |
 
 ---
@@ -362,20 +519,32 @@ Conventional variant prefixes (PascalCase → SCREAMING_SNAKE_CASE):
 
 | `FindingId` variant | Condition | Reduction |
 |---|---|---|
-| `FindingId::CsHttpClient` | `has_vrchat_sdk == true` | 30 → 10 pts |
-| `FindingId::CsReflectionEmit` | `in_editor_folder == true` | 40 → 15 pts |
-| `FindingId::DllOutsidePlugins` | `is_managed_dotnet == true` | N → 0 pts |
-| `FindingId::PolyglotFile` | `has_loader_script == false` | 70 → 15 pts |
+| `FindingId::CsHttpClient` | `has_vrchat_sdk == true` | `PTS_CS_HTTP_CLIENT` → `REDUCE_HTTP_VRC` (10 pts) |
+| `FindingId::CsReflectionEmit` | `in_editor_folder == true` | `PTS_CS_REFLECTION_EMIT` → `REDUCE_REFLECT_EDITOR` (15 pts) |
+| `FindingId::DllOutsidePlugins` | `is_managed_dotnet == true` | → 0 pts |
+| `FindingId::PolyglotFile` | `has_loader_script == false` | `PTS_POLYGLOT_FILE` → `REDUCE_POLYGLOT_NO_LOADER` (15 pts) |
 
 > **Critical rule:** Context reductions never affect findings with `Critical` severity.
 > They only modify `finding.points`; they never change `finding.severity`.
+
+### `has_loader_script` detection
+
+A package is considered to have a loader script if any of these `FindingId` variants are present
+in the findings list **before** `apply_context_reductions` runs:
+
+```rust
+FindingId::CsAssemblyLoadBytes | FindingId::CsProcessStart | FindingId::CsFileWrite
+```
+
+This is evaluated in `analysis::mod::run_all_analyses()` after the parallel pass completes.
 
 ### How to add a new context reduction
 
 1. Add the required flag to `AnalysisContext` in `scoring/context.rs`.
 2. Propagate the flag from `run_all_analyses()` in `analysis/mod.rs`.
 3. Add the `match` arm in `apply_context_reductions()`.
-4. Add a test in `tests/integration/scoring_pipeline.rs`.
+4. Add the corresponding `REDUCE_*` constant to `src/config.rs`.
+5. Add a test in `tests/integration/scoring_pipeline.rs`.
 
 ---
 
@@ -383,6 +552,9 @@ Conventional variant prefixes (PascalCase → SCREAMING_SNAKE_CASE):
 
 **All `Regex` must be declared in `src/utils/patterns.rs`** as `lazy_static!`.
 Do not declare `Regex` inline inside analysis modules.
+
+`SAFE_DOMAINS` is defined in `src/config.rs` and re-exported from `patterns.rs` via
+`pub use crate::config::SAFE_DOMAINS;` so callers only need `use crate::utils::patterns::*`.
 
 Current patterns:
 
@@ -392,33 +564,33 @@ Current patterns:
 | `IP_PATTERN` | Hardcoded IP addresses |
 | `BASE64_LONG` | Base64 strings ≥ 50 chars |
 | `HEX_PE_HEADER` | `4D5A...` hex-encoded PE header |
-| `REGISTRY_KEY` | Windows Registry keys |
-| `SYSTEM_PATH` | System paths (`%APPDATA%`, `C:\Windows\`, etc.) |
-| `SHELL_CMD` | `cmd.exe`, `powershell`, `bash`, `wget`, `curl`, `ncat` |
+| `REGISTRY_KEY` | `HKEY_`, `SOFTWARE\`, `SYSTEM\CurrentControlSet` |
+| `SYSTEM_PATH` | `%APPDATA%`, `%TEMP%`, `C:\Windows\`, `C:\Users\`, `/etc/`, `/tmp/` |
+| `SHELL_CMD` | `cmd.exe`, `powershell`, `bash`, `/bin/sh`, `wget`, `curl`, `ncat`, `nc.exe` |
 | `PATH_TRAVERSAL` | `../` or `..\` |
 | `CS_PROCESS_START` | `Process.Start(` |
 | `CS_ASSEMBLY_LOAD` | `Assembly.Load/LoadFile/LoadFrom(` |
-| `CS_REFLECTION_EMIT` | `System.Reflection.Emit`, `ILGenerator`, `TypeBuilder` |
-| `CS_WEBCLIENT` | `WebClient`, `HttpClient`, `UnityWebRequest`, `TcpClient` |
-| `CS_FILE_WRITE` | `File.WriteAll*`, `File.Delete`, `Directory.CreateDirectory` |
-| `CS_BINARY_FORMATTER` | `BinaryFormatter` |
+| `CS_REFLECTION_EMIT` | `System.Reflection.Emit`, `ILGenerator`, `TypeBuilder`, `MethodBuilder` |
+| `CS_WEBCLIENT` | `WebClient`, `HttpClient`, `UnityWebRequest`, `TcpClient`, `UdpClient` |
+| `CS_FILE_WRITE` | `File.WriteAll*`, `File.Delete`, `Directory.CreateDirectory`, `File.Move`, `File.Copy` |
+| `CS_BINARY_FORMATTER` | `BinaryFormatter`, `System.Runtime.Serialization.Formatters.Binary` |
 | `CS_DLLIMPORT` | `[DllImport("...")]` — captures the DLL name |
 | `CS_UNSAFE` | `\bunsafe\b` — unsafe keyword in any position |
 | `CS_REGISTRY` | `Registry.` or `Microsoft.Win32.Registry` |
 | `CS_ENVIRONMENT` | `Environment.GetEnvironmentVariable/UserName/MachineName` |
-| `CS_CRYPTO` | AES/RSA/BCrypt |
+| `CS_CRYPTO` | `AesCryptoServiceProvider`, `RSACryptoServiceProvider`, `BCryptEncrypt`, `CryptEncrypt` |
 | `CS_MARSHAL` | `Marshal.Copy/AllocHGlobal/GetFunctionPointerForDelegate` |
 | `VRCHAT_SDK` | `using VRC.SDK3`, `using UdonSharp`, `using VRC.Udon` |
 | `SHORT_IDENTIFIER` | 1-2 char identifiers (obfuscation detection) |
 
-### Domain whitelist (`SAFE_DOMAINS`)
+### Domain whitelist (`SAFE_DOMAINS`) — defined in `config.rs`
 
 ```
 vrchat.com, unity3d.com, unity.com, microsoft.com, github.com,
 githubusercontent.com, nuget.org, visualstudio.com, windowsupdate.com
 ```
 
-Use `is_safe_domain(url: &str) -> bool` to check URLs against the whitelist.
+Use `is_safe_domain(url: &str) -> bool` (from `utils::patterns`) to check URLs against the list.
 
 ---
 
@@ -448,8 +620,8 @@ Use `is_safe_domain(url: &str) -> bool` to check URLs against the whitelist.
   assert!(has, "CsProcessStart not found; got: {:#?}", findings);
   ```
 - For polyglot tests: embed the magic byte **inside the file body**, not at the start.
-  Detection **skips the first 16 bytes** (legitimate format header area).  
-  For PE polyglots the validator requires a full DOS+PE structure — see §10 below.
+  Detection **skips the first 16 bytes** (legitimate format header area).
+  For PE polyglots the validator requires a full DOS+PE structure (MZ → e_lfanew → `PE\0\0`).
 - For scoring tests: use `compute_score(&findings)` and verify `(score, level)`.
 - "No false positive" tests must ensure that specific variants do **not** appear:
   ```rust
@@ -466,7 +638,7 @@ Use `is_safe_domain(url: &str) -> bool` to check URLs against the whitelist.
 ### Running tests
 
 ```bash
-cargo test                          # all tests
+cargo test                          # all tests (84 integration + 3 unit)
 cargo test --test integration       # integration tests only
 cargo test <test_name>              # specific test
 cargo test 2>&1 | tail -30          # view final summary
@@ -475,6 +647,25 @@ cargo test 2>&1 | tail -30          # view final summary
 ---
 
 ## 10. Common Mistakes and Pitfalls
+
+### ❌ Missing `mod config;` in `main.rs`
+
+The project has two crate roots: `lib.rs` (library, used by tests) and `main.rs` (binary).
+`lib.rs` already declares `pub mod config`, but `main.rs` **must also declare `mod config;`**
+independently. Without it, every `use crate::config::*` in an analysis module will fail with
+`E0432: unresolved import` when compiling the binary.
+
+```rust
+// ❌ Causes 13 E0432 errors during binary compilation
+mod analysis;
+mod ingestion;
+// ... config missing
+
+// ✓ Correct
+mod analysis;
+mod config;  // ← required in main.rs even though lib.rs already has it
+mod ingestion;
+```
 
 ### ❌ Polyglot scan with a fixed stride
 
@@ -494,6 +685,25 @@ for offset in 16..data.len().saturating_sub(3) {
     // ...
 }
 ```
+
+### ❌ Checking only `MZ` for PE polyglots (false positives)
+
+Checking only the 2-byte `MZ` sequence produces massive false positives on compressed or
+encrypted data. **Always validate the full DOS+PE header structure** using `is_valid_pe_header`:
+
+1. `MZ` at `offset`.
+2. Little-endian u32 at `offset + 0x3C` (`e_lfanew`) ≥ `0x40` and fits in the buffer.
+3. The bytes at `base + e_lfanew` are exactly `PE\0\0`.
+
+Both `texture_scanner.rs` and `audio_scanner.rs` implement this locally as `is_valid_pe_header`.
+
+### ❌ Entropy check on compressed texture/audio formats
+
+PNG, JPEG, WebP textures and MP3, OGG, AAC, FLAC, Opus audio files are natively compressed.
+Their entropy is naturally near 8.0. **Never run entropy checks on these formats** — doing so
+would flag virtually every legitimate asset.
+
+Use the `is_natively_compressed` / `is_compressed_audio` guard before calling `shannon_entropy`.
 
 ### ❌ Overly restrictive `unsafe` regex
 
@@ -533,84 +743,51 @@ the analysis hot-path recompiles on every call.
 `apply_context_reductions` must only modify `finding.points`. The severity of a finding is
 immutable once assigned. Tests in `scoring_pipeline.rs` verify this invariant.
 
-### ❌ Identical branches in conditional logic
+### ❌ Hardcoding point values in analysis modules
 
-When a condition is meant to produce different behavior (e.g. known vs. unknown DLL), verify
-that both branches of the `if`/`match` actually differ. A dead condition misleads readers and
-may silently skip the intended logic:
-
-```rust
-// ❌ Wrong — both branches are identical; the condition is pointless
-let severity = if is_known { Severity::High } else { Severity::High };
-
-// ✓ Correct — known system DLLs are less suspicious
-let severity = if is_known { Severity::Medium } else { Severity::High };
-```
-
-### ❌ `&mut Vec<T>` when a slice is sufficient
-
-If a function only iterates and mutates existing elements (no `push`, `pop`, or capacity ops),
-accept `&mut [T]` instead. `&mut Vec<T>` auto-derefs to `&mut [T]` at all call sites:
-
-```rust
-// ❌ Unnecessarily restrictive — prevents passing a plain slice
-pub fn apply_context_reductions(findings: &mut Vec<Finding>, ...) { ... }
-
-// ✓ More general — callers can pass Vec or any mutable slice
-pub fn apply_context_reductions(findings: &mut [Finding], ...) { ... }
-```
-
-### ❌ Shared mutable state in `par_iter()`
-
-`run_all_analyses` uses `rayon::par_iter()`. Do not introduce `Arc<Mutex<...>>` without
-justification. Findings are accumulated per entry and then flattened (`flatten()`).
-
-### ❌ `panic!` in untrusted data analysis paths
-
-The scanner processes arbitrary files. Use `unwrap_or_default()`, `unwrap_or(0)`, `map_err()`,
-and the crate's own `Result` type wherever possible. Do not use `.unwrap()` in production code.
+Use the `PTS_*` constants from `src/config.rs` rather than literal numbers in `Finding::new()`.
+This ensures all values are tuneable from a single location.
 
 ---
 
 ## 11. Server Mode (Cloudflare Containers)
 
-The HTTP server is started with `vrcstorage-scanner serve --port 8080`.
+The scanner ships an **axum** HTTP server designed to run inside a Cloudflare Container, called
+by a Worker when a new upload arrives.
 
 ### Endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/scan` | Submit a scan job |
-| `GET` | `/health` | Health check; returns `{"ok": true}` |
+| `POST` | `/scan` | Download from R2, scan, return JSON report |
+| `GET` | `/health` | Returns `{"ok": true}` |
 
-### `POST /scan` body
+### `POST /scan` request body
 
 ```json
 {
-  "r2_url": "https://...r2.cloudflarestorage.com/...",
-  "file_id": "file-uuid",
-  "expected_sha256": "abc123..."   // optional — validates integrity before scanning
+  "r2_url": "https://bucket.r2.cloudflarestorage.com/…",
+  "file_id": "some-uuid",
+  "expected_sha256": "optional-hex-hash"
 }
 ```
 
-### Server flow
+If `expected_sha256` is provided and the downloaded file's hash does not match, the server
+returns HTTP 400.
 
-1. Download the file from `r2_url` using `reqwest`.
-2. If `expected_sha256` is present, verify SHA-256. Mismatch → `400 Bad Request`.
-3. Call `run_scan_bytes(&bytes, &file_id)` (same pipeline as CLI).
-4. Serialize `ScanReport` to JSON and return it in `scan_result`.
+### HTTP error codes
 
-### Server status codes
-
-| Code | Situation |
+| Code | Meaning |
 |---|---|
-| `200` | Scan completed (even if risk is CRITICAL) |
+| `200` | Scan completed (even Critical — the Worker enforces rejection) |
 | `400` | SHA-256 mismatch |
-| `502` | Failed to download from R2 |
-| `500` | Internal error during scan or serialization |
+| `502` | R2 download failed |
+| `500` | Internal scan or serialization error |
 
-> The server **does not reject** the request when risk is CRITICAL — it simply returns the result.
-> The decision to reject content is the responsibility of the Cloudflare Worker consuming this endpoint.
+### Memory model
+
+The container **never writes files to disk**. All data — download buffer, extracted tree,
+findings — lives fully in memory. This makes it safe to run multiple instances concurrently.
 
 ---
 
@@ -623,34 +800,27 @@ cargo build
 # Build (release)
 cargo build --release
 
-# Run all tests
+# Run all tests (unit + integration)
 cargo test
 
-# Run only integration tests with verbose output
-cargo test --test integration -- --nocapture
+# Integration tests only
+cargo test --test integration
 
-# Run a specific test
-cargo test unsafe_block_flagged
+# A specific test by name
+cargo test process_start_detected_as_critical
 
-# Apply clippy suggestions
-cargo clippy --fix
-
-# Remove unused imports suggested by the compiler
-cargo fix --lib -p vrcstorage-scanner
+# Lint
+cargo clippy
 
 # Benchmarks
 cargo bench
 
-# Scan a file locally (CLI output)
-cargo run -- scan Assets/my_avatar.unitypackage
+# Start server locally
+cargo run -- serve --port 8080
 
-# Scan a file and produce JSON
-cargo run -- scan Assets/my_avatar.unitypackage --output json
+# Scan a file (CLI)
+cargo run -- scan path/to/file.unitypackage
 
-# Start local server on port 9000
-cargo run -- serve --port 9000
+# Scan and emit JSON
+cargo run -- scan path/to/file.unitypackage --output json
 ```
-
----
-
-_Last updated: 2026-04-20 | Scanner version: 0.1.0 | Refactor: string-based finding IDs replaced by `FindingId` typed enum; `human_explanation()` is now exhaustive at compile time; `AnalysisContext` gains `has_loader_script` flag; 84/84 tests passing._

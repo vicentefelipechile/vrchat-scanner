@@ -1,5 +1,6 @@
 use crate::report::{Finding, FindingId, Severity};
 use crate::utils::shannon_entropy;
+use crate::config::*;
 
 /// Scan an audio file for anomalies.
 pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
@@ -34,7 +35,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         entropy < 4.0
     } else {
         // For uncompressed formats (wav, aiff, raw pcm) flag both extremes.
-        !(5.0..=7.9).contains(&entropy)
+        !(ENTROPY_AUDIO_MIN..=ENTROPY_AUDIO_MAX).contains(&entropy)
     };
 
     if unusual {
@@ -42,7 +43,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
             Finding::new(
                 FindingId::AudioUnusualEntropy,
                 Severity::Low,
-                8,
+                PTS_AUDIO_UNUSUAL_ENTROPY,
                 location,
                 format!("Audio file has unusual entropy {:.2}", entropy),
             )
@@ -66,7 +67,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
                     Finding::new(
                         FindingId::PolyglotFile,
                         Severity::High,
-                        70,
+                        PTS_POLYGLOT_FILE,
                         location,
                         "Valid PE header found inside audio file — polyglot payload detected",
                     )
@@ -83,7 +84,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
                 Finding::new(
                     FindingId::PolyglotFile,
                     Severity::High,
-                    70,
+                    PTS_POLYGLOT_FILE,
                     location,
                     "ZIP (PK) header found inside audio file — polyglot payload detected",
                 )

@@ -1,4 +1,5 @@
 mod analysis;
+mod config;
 mod ingestion;
 mod pipeline;
 mod report;

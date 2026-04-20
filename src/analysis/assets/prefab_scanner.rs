@@ -1,5 +1,6 @@
 use crate::report::{Finding, FindingId, Severity};
 use crate::utils::patterns::BASE64_LONG;
+use crate::config::*;
 
 /// Scan a Unity .prefab or .asset file (YAML or binary) for anomalies.
 pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
@@ -15,11 +16,11 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         let text = String::from_utf8_lossy(data);
         // Look for GUID-like strings referencing external assets
         let guid_refs: Vec<_> = text.match_indices("guid: ").collect();
-        if guid_refs.len() > 100 {
+        if guid_refs.len() > THRESHOLD_PREFAB_EXCESSIVE_GUIDS {
             findings.push(Finding::new(
                 FindingId::PrefabExcessiveGuids,
                 Severity::Low,
-                5,
+                PTS_PREFAB_EXCESSIVE_GUIDS,
                 location,
                 "Binary prefab has an unusually large number of GUID references",
             ).with_context(format!("count={}", guid_refs.len())));
@@ -37,7 +38,7 @@ fn analyze_yaml(content: &str, location: &str) -> Vec<Finding> {
         findings.push(Finding::new(
             FindingId::MetaExternalRef,
             Severity::Medium,
-            25,
+            PTS_META_EXTERNAL_REF,
             location,
             "Prefab/asset references external objects not included in the package",
         ));
@@ -45,11 +46,11 @@ fn analyze_yaml(content: &str, location: &str) -> Vec<Finding> {
 
     // Scan for long Base64 fields
     for m in BASE64_LONG.find_iter(content) {
-        if m.len() > 200 {
+        if m.len() > OBFUSC_BASE64_LONG_LEN {
             findings.push(Finding::new(
                 FindingId::PrefabInlineB64,
                 Severity::Low,
-                8,
+                PTS_PREFAB_INLINE_B64,
                 location,
                 "Long Base64-encoded field in YAML prefab/asset (may be inline texture or payload)",
             ).with_context(format!("length={}", m.len())));
@@ -61,11 +62,11 @@ fn analyze_yaml(content: &str, location: &str) -> Vec<Finding> {
     // Look for unknown component types
     if content.contains("m_Script:") {
         let script_count = content.matches("m_Script:").count();
-        if script_count > 20 {
+        if script_count > THRESHOLD_PREFAB_MANY_SCRIPTS {
             findings.push(Finding::new(
                 FindingId::PrefabManyScripts,
                 Severity::Low,
-                5,
+                PTS_PREFAB_MANY_SCRIPTS,
                 location,
                 "Prefab references an unusually large number of scripts",
             ).with_context(format!("count={script_count}")));

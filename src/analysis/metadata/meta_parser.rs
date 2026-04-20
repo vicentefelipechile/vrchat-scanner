@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use crate::report::{Finding, FindingId, Severity};
+use crate::config::*;
 
 /// Parse a Unity .meta YAML file and extract relevant information.
 pub struct MetaInfo {
@@ -36,7 +37,7 @@ pub fn analyze(content: &str, location: &str) -> (MetaInfo, Vec<Finding>) {
                             Finding::new(
                                 FindingId::MetaFutureTimestamp,
                                 Severity::Medium,
-                                20,
+                                PTS_META_FUTURE_TIMESTAMP,
                                 location,
                                 "Meta file has a timestamp set in the future (possible manipulation)",
                             )
@@ -54,7 +55,7 @@ pub fn analyze(content: &str, location: &str) -> (MetaInfo, Vec<Finding>) {
             findings.push(Finding::new(
                 FindingId::MetaExternalRef,
                 Severity::Medium,
-                25,
+                PTS_META_EXTERNAL_REF,
                 location,
                 "Meta file contains external object references (assets not included in package)",
             ));

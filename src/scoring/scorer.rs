@@ -1,3 +1,4 @@
+use crate::config::{SCORE_CLEAN_MAX, SCORE_LOW_MAX, SCORE_MEDIUM_MAX, SCORE_HIGH_MAX};
 use crate::report::Finding;
 
 /// Final risk level classification
@@ -30,11 +31,9 @@ pub fn compute_score(findings: &[Finding]) -> (u32, RiskLevel) {
 }
 
 fn classify(score: u32) -> RiskLevel {
-    match score {
-        0..=30  => RiskLevel::Clean,
-        31..=60 => RiskLevel::Low,
-        61..=100 => RiskLevel::Medium,
-        101..=150 => RiskLevel::High,
-        _ => RiskLevel::Critical,
-    }
+    if score <= SCORE_CLEAN_MAX  { RiskLevel::Clean    }
+    else if score <= SCORE_LOW_MAX    { RiskLevel::Low      }
+    else if score <= SCORE_MEDIUM_MAX { RiskLevel::Medium   }
+    else if score <= SCORE_HIGH_MAX   { RiskLevel::High     }
+    else                              { RiskLevel::Critical }
 }

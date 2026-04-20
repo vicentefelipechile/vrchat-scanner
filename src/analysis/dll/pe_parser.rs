@@ -1,5 +1,6 @@
 use crate::report::{Finding, FindingId, Severity};
 use crate::utils::shannon_entropy;
+use crate::config::*;
 
 /// Information extracted from a PE file header
 #[derive(Debug, Default)]
@@ -21,7 +22,7 @@ pub fn analyze(data: &[u8], location: &str) -> (PeInfo, Vec<Finding>) {
         findings.push(Finding::new(
             FindingId::PeInvalidHeader,
             Severity::Medium,
-            15,
+            PTS_PE_INVALID_HEADER,
             location,
             "File does not start with MZ magic bytes (invalid PE)",
         ));
@@ -73,23 +74,23 @@ pub fn analyze(data: &[u8], location: &str) -> (PeInfo, Vec<Finding>) {
                 let is_executable = (characteristic_flags & 0x20000000) != 0;
                 let is_writable   = (characteristic_flags & 0x80000000) != 0;
 
-                if entropy >= 7.2 {
+                if entropy >= ENTROPY_PE_HIGH {
                     findings.push(
                         Finding::new(
                             FindingId::PeHighEntropySection,
                             Severity::High,
-                            55,
+                            PTS_PE_HIGH_ENTROPY_HIGH,
                             location,
                             format!("Section '{}' has entropy {:.2} (possible packer/encryption)", name, entropy),
                         )
                         .with_context(format!("Section: {name}")),
                     );
-                } else if entropy >= 6.8 {
+                } else if entropy >= ENTROPY_PE_SUSPICIOUS {
                     findings.push(
                         Finding::new(
                             FindingId::PeHighEntropySection,
                             Severity::Medium,
-                            20,
+                            PTS_PE_HIGH_ENTROPY_MEDIUM,
                             location,
                             format!("Section '{}' has suspicious entropy {:.2}", name, entropy),
                         )
@@ -101,7 +102,7 @@ pub fn analyze(data: &[u8], location: &str) -> (PeInfo, Vec<Finding>) {
                     findings.push(Finding::new(
                         FindingId::PeUnnamedSection,
                         Severity::Medium,
-                        20,
+                        PTS_PE_UNNAMED_SECTION,
                         location,
                         "PE section without a name (possible evasion technique)",
                     ));
@@ -112,7 +113,7 @@ pub fn analyze(data: &[u8], location: &str) -> (PeInfo, Vec<Finding>) {
                         Finding::new(
                             FindingId::PeWriteExecuteSection,
                             Severity::High,
-                            40,
+                            PTS_PE_WRITE_EXECUTE_SECTION,
                             location,
                             format!("Section '{}' is both writable and executable (W+X)", name),
                         )
@@ -120,12 +121,12 @@ pub fn analyze(data: &[u8], location: &str) -> (PeInfo, Vec<Finding>) {
                     );
                 }
 
-                if virtual_size > raw_size.saturating_mul(4) && raw_size > 0 {
+                if virtual_size > raw_size.saturating_mul(PE_INFLATED_RATIO) && raw_size > 0 {
                     findings.push(
                         Finding::new(
                             FindingId::PeInflatedSection,
                             Severity::Medium,
-                            20,
+                            PTS_PE_INFLATED_SECTION,
                             location,
                             format!("Section '{}' virtual_size >> raw_size (runtime decompression?)", name),
                         )
@@ -138,7 +139,7 @@ pub fn analyze(data: &[u8], location: &str) -> (PeInfo, Vec<Finding>) {
             findings.push(Finding::new(
                 FindingId::PeParseError,
                 Severity::Low,
-                5,
+                PTS_PE_PARSE_ERROR,
                 location,
                 format!("Could not fully parse PE header: {e}"),
             ));

@@ -65,21 +65,32 @@ cargo build --release
 ./target/release/vrcstorage-scanner serve --port 8080
 ```
 
+### Drag-and-drop (Windows / macOS)
+
+Drop any supported file directly onto the `vrcstorage-scanner` executable.
+The scanner runs automatically and **waits for you to press Enter** before closing
+the terminal window so you have time to read the results.
+
 ---
 
 ## 3. CLI Usage
 
 ```
-vrcstorage-scanner scan <FILE> [OPTIONS]
+vrcstorage-scanner [FILE]                    # Drag-and-drop shorthand (pauses on exit)
+vrcstorage-scanner scan <FILE> [OPTIONS]     # Explicit scan subcommand
+vrcstorage-scanner serve [OPTIONS]           # Start HTTP server
 
-Arguments:
+Arguments (scan):
   <FILE>   Path to file to scan (.unitypackage, .dll, .cs, .zip, ...)
 
-Options:
+Options (scan):
   -o, --output <FORMAT>        Output format: "cli" (default) or "json"
   -f, --output-file <PATH>     Write output to file instead of stdout
   -h, --help                   Print help
   -V, --version                Print version
+
+Options (serve):
+  -p, --port <PORT>            Port to listen on (default: 8080)
 ```
 
 ### Example — CLI output
@@ -389,50 +400,33 @@ cargo test --test integration -- --nocapture
 # A specific test by name
 cargo test process_start_detected_as_critical
 
-# Lint (no warnings allowed)
-cargo clippy -- -W unused -W dead-code -W unused-imports
+# Lint
+cargo clippy
 
 # Benchmarks
 cargo bench
 ```
 
-The integration test suite covers **84 scenarios** including:
+The test suite covers **87 scenarios** (84 integration + 3 unit) including:
 
 - Clean packages that produce no false positives
 - Malicious DLL patterns (socket imports, W+X sections, high entropy)
-- Obfuscated C# scripts (base64, short identifiers, XOR patterns)
+- Obfuscated C# scripts (base64, short identifiers, XOR, unicode escapes)
 - Polyglot asset detection (PE/ZIP embedded in PNG or audio files)
-- Metadata anomalies (future timestamps, external references)
-- Scoring pipeline and context reductions (including polyglot ↔ loader correlation)
+  — validated with full DOS+PE struct check, not just `MZ` bytes
+- Compressed format exemptions (PNG, JPEG, OGG, MP3 don't trigger entropy)
+- Metadata anomalies (future timestamps, external references, dependency fan-in)
+- Scoring pipeline and context reductions (polyglot ↔ loader correlation,
+  VRChat SDK HTTP reduction, Editor folder Reflection.Emit reduction)
 
 ---
 
 ## 10. License
 
-```
-MIT License
-
-Copyright (c) 2026 VRCStorage Team
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
+[LICENSE](/LICENSE)
 
 ---
 
 > For architecture notes, coding conventions, and contribution rules, see [AGENTS.md](AGENTS.md).
+>
+> For a non-technical guide to adjusting scanner sensitivity (score thresholds, domains, point values), see [CONFIG.md](CONFIG.md).
