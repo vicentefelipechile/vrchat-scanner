@@ -1,29 +1,29 @@
-/// # vrcstorage-scanner — Centralized Configuration
-///
-/// This is the **single source of truth** for every tuneable value in the scanner.
-/// Non-technical contributors only need to read and edit **this one file**.
-///
-/// ## How to apply a change
-///
-/// 1. Edit the constant(s) you want to adjust below.
-/// 2. Save the file.
-/// 3. Run `cargo test` — all 84 integration tests must still pass.
-/// 4. Open a pull request with your rationale.
-///
-/// No other source files need to change when you tune values here.
-///
-/// ## Sections
-///
-/// | Section | Constants |
-/// |---|---|
-/// | Risk score bands | `SCORE_*_MAX` |
-/// | Per-finding points | `PTS_*` |
-/// | Context score reductions | `REDUCE_*` |
-/// | Entropy thresholds | `ENTROPY_*` |
-/// | Package-level thresholds | `THRESHOLD_*` |
-/// | Obfuscation detection | `OBFUSC_*` |
-/// | Forbidden extensions | `FORBIDDEN_EXTENSIONS` |
-/// | Domain whitelist | `SAFE_DOMAINS` |
+//! # vrcstorage-scanner — Centralized Configuration
+//!
+//! This is the **single source of truth** for every tuneable value in the scanner.
+//! Non-technical contributors only need to read and edit **this one file**.
+//!
+//! ## How to apply a change
+//!
+//! 1. Edit the constant(s) you want to adjust below.
+//! 2. Save the file.
+//! 3. Run `cargo test` — all 84 integration tests must still pass.
+//! 4. Open a pull request with your rationale.
+//!
+//! No other source files need to change when you tune values here.
+//!
+//! ## Sections
+//!
+//! | Section | Constants |
+//! |---|---|
+//! | Risk score bands | `SCORE_*_MAX` |
+//! | Per-finding points | `PTS_*` |
+//! | Context score reductions | `REDUCE_*` |
+//! | Entropy thresholds | `ENTROPY_*` |
+//! | Package-level thresholds | `THRESHOLD_*` |
+//! | Obfuscation detection | `OBFUSC_*` |
+//! | Forbidden extensions | `FORBIDDEN_EXTENSIONS` |
+//! | Domain whitelist | `SAFE_DOMAINS` |
 
 // =============================================================================
 // 1. RISK SCORE BANDS
