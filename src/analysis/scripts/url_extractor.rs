@@ -19,6 +19,9 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
             continue;
         }
 
+        // Compute 1-indexed line number from byte offset
+        let line_num = source[..m.start()].bytes().filter(|&b| b == b'\n').count() as u64 + 1;
+
         // IP address used as URL host
         if IP_PATTERN.is_match(url) {
             findings.push(
@@ -29,7 +32,8 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
                     location,
                     "Hardcoded IP address used as URL in C# script",
                 )
-                .with_context(url.chars().take(120).collect::<String>()),
+                .with_context(url.chars().take(120).collect::<String>())
+                .with_line_numbers(vec![line_num]),
             );
         } else {
             findings.push(
@@ -40,7 +44,8 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
                     location,
                     "URL to unrecognized domain in C# script",
                 )
-                .with_context(url.chars().take(120).collect::<String>()),
+                .with_context(url.chars().take(120).collect::<String>())
+                .with_line_numbers(vec![line_num]),
             );
         }
     }

@@ -3,9 +3,11 @@ use std::time::Instant;
 
 use crate::analysis::run_all_analyses;
 use crate::ingestion::{extractor, FileRecord, FileType};
+use crate::ingestion::extractor::PackageTree;
 use crate::ingestion::type_detection::detect_type;
 use crate::report::ScanReport;
 use crate::scoring::{apply_context_reductions, compute_score};
+use crate::scoring::context::AnalysisContext;
 
 /// The full scan pipeline: ingest → extract → analyze → score → report.
 /// Returns the completed ScanReport.
@@ -13,6 +15,20 @@ pub fn run_scan(path: &Path) -> crate::utils::Result<ScanReport> {
     let start = Instant::now();
 
     // Stage 0: File ingestion
+    let file_record = FileRecord::from_path(path)?;
+    let data = std::fs::read(path)?;
+
+    let (report, _, _) = run_scan_with_record(data, file_record, start)?;
+    Ok(report)
+}
+
+/// Extended scan that also returns the [`AnalysisContext`] and [`PackageTree`].
+///
+/// Used by the sanitize module so it can operate on already-analysed data
+/// without running the full pipeline a second time.
+pub fn run_scan_full(path: &Path) -> crate::utils::Result<(ScanReport, AnalysisContext, PackageTree)> {
+    let start = Instant::now();
+
     let file_record = FileRecord::from_path(path)?;
     let data = std::fs::read(path)?;
 
@@ -44,14 +60,15 @@ pub fn run_scan_bytes(data: &[u8], file_id: &str) -> crate::utils::Result<ScanRe
         timestamp: chrono::Utc::now(),
     };
 
-    run_scan_with_record(data.to_vec(), file_record, start)
+    let (report, _, _) = run_scan_with_record(data.to_vec(), file_record, start)?;
+    Ok(report)
 }
 
 fn run_scan_with_record(
     data: Vec<u8>,
     file_record: FileRecord,
     start: Instant,
-) -> crate::utils::Result<ScanReport> {
+) -> crate::utils::Result<(ScanReport, AnalysisContext, PackageTree)> {
     let file_type = file_record.file_type.clone();
 
     // Stage 1: Extract / build package tree
@@ -71,5 +88,5 @@ fn run_scan_with_record(
     // Stage 7: Build report
     let report = ScanReport::build(file_record, findings, score, level, counts, duration_ms);
 
-    Ok(report)
+    Ok((report, context, tree))
 }

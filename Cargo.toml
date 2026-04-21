@@ -1,6 +1,6 @@
 [package]
 name = "vrcstorage-scanner"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Static analysis scanner for Unity/VRChat packages"
 authors = ["SummerTYT <vicentefelipechile>"]
@@ -73,7 +73,10 @@ tower-http = { version = "0.5", features = ["trace"] }
 
 # Windows console VTP (Virtual Terminal Processing) for ANSI support on Win10
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_Console", "Win32_Foundation"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_System_Console",
+    "Win32_Foundation",
+] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

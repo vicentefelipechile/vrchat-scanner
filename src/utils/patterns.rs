@@ -61,8 +61,14 @@ lazy_static! {
     pub static ref CS_UNSAFE: Regex =
         Regex::new(r"\bunsafe\b").unwrap();
 
+    // Matches real Windows Registry API usage only.
+    // Avoids false positives from custom classes like PoiExternalToolRegistry:
+    //   - Microsoft.Win32.Registry  — fully-qualified namespace
+    //   - Registry.<Hive>           — direct access to a known hive (LocalMachine, CurrentUser, etc.)
+    //   - RegistryKey               — use of the RegistryKey type (.OpenSubKey, .SetValue, etc.)
+    //   - HKEY_*                    — string literals containing Win32 registry root paths
     pub static ref CS_REGISTRY: Regex =
-        Regex::new(r"Registry\.|Microsoft\.Win32\.Registry").unwrap();
+        Regex::new(r"Microsoft\.Win32\.Registry|\bRegistry\.(LocalMachine|CurrentUser|ClassesRoot|Users|CurrentConfig|PerformanceData)\b|\bRegistryKey\b|HKEY_(LOCAL_MACHINE|CURRENT_USER|CLASSES_ROOT|USERS|CURRENT_CONFIG)").unwrap();
 
     pub static ref CS_ENVIRONMENT: Regex =
         Regex::new(r"Environment\.(GetEnvironmentVariable|UserName|MachineName)").unwrap();

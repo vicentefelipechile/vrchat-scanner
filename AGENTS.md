@@ -35,7 +35,8 @@ executing the content.
 |---|---|---|
 | CLI scan | `vrcstorage-scanner scan <FILE>` | Local file analysis |
 | CLI JSON | `vrcstorage-scanner scan <FILE> --output json` | CI / script integration |
-| Drag-and-drop | `vrcstorage-scanner <FILE>` | Non-technical users (pauses on exit) |
+| CLI sanitize | `vrcstorage-scanner sanitize <FILE>` | Remove/neutralize malicious assets |
+| Drag-and-drop | `vrcstorage-scanner <FILE>` | Non-technical users (pauses on exit; offers sanitize prompt for .unitypackage) |
 | HTTP server | `vrcstorage-scanner serve --port 8080` | Cloudflare Containers (R2 download) |
 
 **Server output:** `POST /scan` with body `{ "r2_url": "...", "file_id": "...", "expected_sha256": "..." }`.
@@ -56,10 +57,11 @@ vrcstorage-scanner/
 │
 ├── src/
 │   ├── lib.rs                  ← re-exports all modules (used by tests and integrations)
-│   ├── main.rs                 ← CLI with clap: `scan` and `serve` subcommands
+│   ├── main.rs                 ← CLI with clap: `scan`, `sanitize`, `serve`, `credits` subcommands
 │   │                              IMPORTANT: must declare all modules that use crate::config
 │   ├── config.rs               ← SINGLE SOURCE OF TRUTH for all tuneable constants
 │   ├── pipeline.rs             ← full flow orchestration (stages 0-7)
+│   ├── terminal.rs             ← TermCaps: ANSI + Unicode capability detection (Win10 VTP)
 │   │
 │   ├── ingestion/              ← Stages 0 and 1: ingestion and extraction
 │   │   ├── mod.rs
@@ -90,6 +92,9 @@ vrcstorage-scanner/
 │   │       ├── meta_parser.rs  ← GUID, timestamps, externalObjects
 │   │       └── dependency_graph.rs ← FindingId::DllManyDependents: flags DLLs with > 5 .meta references
 │   │
+│   ├── sanitize/               ← `sanitize` subcommand implementation
+│   │   └── mod.rs              ← run_sanitize(): applies decision matrix, rewrites .unitypackage
+│   │
 │   ├── scoring/
 │   │   ├── mod.rs              ← re-exports compute_score, apply_context_reductions, RiskLevel
 │   │   ├── scorer.rs           ← compute_score() + classification (Clean/Low/Medium/High/Critical)
@@ -100,7 +105,8 @@ vrcstorage-scanner/
 │   │   ├── mod.rs
 │   │   ├── finding.rs          ← FindingId enum, Finding struct, Severity (Low/Medium/High/Critical)
 │   │   ├── json_reporter.rs    ← to_json(): serializes ScanReport to JSON
-│   │   └── cli_reporter.rs     ← print_report(): colored ANSI output
+│   │   ├── cli_reporter.rs     ← print_report(): colored ANSI output
+│   │   └── sanitize_reporter.rs ← print_sanitize_report(): colored output for sanitize results
 │   │
 │   ├── server/
 │   │   └── mod.rs              ← axum server: POST /scan, GET /health
@@ -228,9 +234,14 @@ Input (path or bytes)
 - `FindingId` — typed enum with one variant per rule (`PascalCase`). Every variant carries a
   `#[serde(rename = "SCREAMING_SNAKE_CASE")]` attribute so the JSON wire format is identical to
   the previous string representation. `FindingId` is `Copy + Hash + Eq + PartialEq`.
-- `Finding` — atomic result unit: `id: FindingId`, `severity`, `points`, `location`, `detail`, `context`.
+- `Finding` — atomic result unit: `id: FindingId`, `severity`, `points`, `location`, `detail`,
+  `context`, `line_numbers`. The `line_numbers: Vec<u64>` field (1-indexed) is populated by
+  `pattern_matcher` for C# findings and consumed by the sanitizer to know which exact lines to
+  comment out. It is omitted from JSON when empty.
 - `Severity` — `Low | Medium | High | Critical` (impl `PartialOrd`).
 - `ScanReport` — complete structure serializable to JSON.
+- `sanitize_reporter` — `print_sanitize_report(&SanitizeReport, TermCaps)`: colored CLI output
+  for the result of a `sanitize` run.
 
 ### `utils`
 
@@ -256,13 +267,54 @@ mod config;   // ← REQUIRED — all modules use crate::config::* from the bina
 mod ingestion;
 mod pipeline;
 mod report;
+mod sanitize; // ← sanitize subcommand
 mod scoring;
 mod server;
+mod terminal; // ← TermCaps capability detection
 mod utils;
 ```
 
 Omitting `mod config;` from `main.rs` produces 13 `E0432` errors because `crate::config` is
 not resolvable in the binary compilation context even though `lib.rs` already declares it.
+
+### `main.rs` — drag-and-drop flow
+
+The drag-and-drop branch (when the user drops a file onto the executable) has a specific
+execution order that **must not be changed**:
+
+```
+1. run_scan_command()   → (RiskLevel, Vec<Finding>)  ← scan + print report
+2. prompt_sanitize()    ← shown only for .unitypackage with High/Critical level
+3. run_sanitize_command() (optional, only if user answers Y)
+4. wait_for_keypress()  ← keeps the window open
+5. process::exit(2)     ← only for Critical, AFTER all of the above
+```
+
+> **Critical rule:** `process::exit(2)` must never be called inside `run_scan_command`
+> when used from the drag-and-drop path.  Calling it there closes the window before
+> `wait_for_keypress()` runs, giving the user no time to read the report.
+> The exit is always the **last** statement in the drag-and-drop `match` arm.
+
+`run_scan_command` returns `(scoring::RiskLevel, Vec<report::Finding>)` so that:
+- The caller can defer `process::exit(2)` until after all prompts.
+- The drag-and-drop branch can pass the findings to `prompt_sanitize` without a second scan.
+
+### `main.rs` — sanitize prompt helpers
+
+Three private functions support the interactive sanitize prompt:
+
+| Function | Signature | Purpose |
+|---|---|---|
+| `finding_api_label` | `(FindingId) -> &'static str` | Maps a FindingId to a short API name (e.g. `"Process.Start()"`) |
+| `build_action_list` | `(&[Finding]) -> Vec<String>` | Builds a sorted per-asset action list from High/Critical findings |
+| `prompt_sanitize` | `(&Path, &[Finding], TermCaps) -> bool` | Renders the prompt with `═══` separators; returns true if user answers `Y` |
+
+`build_action_list` groups findings by `location`:
+- `.cs` files → `"comment out <api1>, <api2>"`
+- `.dll` / `.so` / other binary assets → `"will be removed from the package"`
+
+The prompt uses `═══` separator lines (Unicode) or `===` (ASCII fallback) — **never box-drawing
+characters**. The output filename is computed from the actual input path, not a template string.
 
 ### Public analysis function signatures
 
@@ -457,7 +509,7 @@ modules.
 | Unknown `[DllImport]` | `CS_DLLIMPORT_UNKNOWN` | High | `PTS_CS_DLLIMPORT_UNKNOWN` = 60 |
 | Raw socket import (ws2_32) | `DLL_IMPORT_SOCKETS` | High | `PTS_DLL_IMPORT_SOCKETS` = 60 |
 | URL to unknown domain / hardcoded IP | `CS_URL_UNKNOWN_DOMAIN` / `CS_IP_HARDCODED` | High | `PTS_CS_URL_UNKNOWN_DOMAIN` = 50, `PTS_CS_IP_HARDCODED` = 50 |
-| Magic bytes mismatch | `MAGIC_MISMATCH` | High | `PTS_MAGIC_MISMATCH` = 50 |
+| Magic bytes mismatch | `MAGIC_MISMATCH` | Medium | `PTS_MAGIC_MISMATCH` = 25 |
 | Double extension | `DOUBLE_EXTENSION` | High | `PTS_DOUBLE_EXTENSION` = 50 |
 | PE section entropy ≥ 7.2 | `PE_HIGH_ENTROPY_SECTION` | High | `PTS_PE_HIGH_ENTROPY_HIGH` = 55 |
 | WinInet/WinHTTP import | `DLL_IMPORT_INTERNET` | High | `PTS_DLL_IMPORT_INTERNET` = 45 |
@@ -749,6 +801,56 @@ immutable once assigned. Tests in `scoring_pipeline.rs` verify this invariant.
 Use the `PTS_*` constants from `src/config.rs` rather than literal numbers in `Finding::new()`.
 This ensures all values are tuneable from a single location.
 
+### ❌ Calling `process::exit` inside `run_scan_command` in drag-and-drop mode
+
+In the drag-and-drop path, `run_scan_command` **must not** call `process::exit(2)` directly.
+Doing so closes the terminal window before `wait_for_keypress()` is reached, and the user
+cannot read the report or interact with the sanitize prompt.
+
+```rust
+// ❌ Wrong — run_scan_command calls process::exit(2) before wait_for_keypress
+run_scan_command(&file, "cli", None, true, caps);
+wait_for_keypress(caps);  // ← never reached for Critical packages
+
+// ✓ Correct — caller receives the level and exits only after all prompts
+let (level, findings) = run_scan_command(&file, "cli", None, true, caps);
+// ... prompt_sanitize, wait_for_keypress ...
+if level == RiskLevel::Critical { std::process::exit(2); }  // last line
+```
+
+### ❌ Re-scanning the file a second time in the sanitize prompt
+
+The sanitize prompt must **not** call `pipeline::run_scan()` again. The drag-and-drop branch
+already has the full findings from the first scan. Pass them directly to `prompt_sanitize`.
+
+```rust
+// ❌ Wrong — runs the full scan a second time
+if let Ok(report) = pipeline::run_scan(&file) { ... }
+
+// ✓ Correct — reuse findings already returned by run_scan_command
+let (level, findings) = run_scan_command(...);
+if ... { prompt_sanitize(&file, &findings, caps); }
+```
+
+### ❌ Using box-drawing characters in interactive prompts
+
+Boxes (`┌─┐│└─┘`) are hard to align correctly and break on narrow or legacy terminals.
+All interactive prompts must use `═══` separator lines (Unicode) or `===` (ASCII fallback).
+
+```
+// ❌ Wrong
+┌──────────────────────────────────────┐
+│  Threats detected.                   │
+└──────────────────────────────────────┘
+
+// ✓ Correct
+════════════════════════════════════════
+  Section Title
+════════════════════════════════════════
+
+Threats detected.
+```
+
 ---
 
 ## 11. Server Mode (Cloudflare Containers)
@@ -824,4 +926,16 @@ cargo run -- scan path/to/file.unitypackage
 
 # Scan and emit JSON
 cargo run -- scan path/to/file.unitypackage --output json
+
+# Sanitize a package (removes/neutralizes High+ findings)
+cargo run -- sanitize path/to/file.unitypackage
+
+# Sanitize with custom output path and dry-run
+cargo run -- sanitize path/to/file.unitypackage --output out.unitypackage --dry-run
+
+# Sanitize acting on Medium+ findings
+cargo run -- sanitize path/to/file.unitypackage --min-severity medium
+
+# Drag-and-drop (triggers interactive pause + sanitize prompt for .unitypackage)
+cargo run -- path/to/file.unitypackage
 ```

@@ -296,7 +296,7 @@ pub const PTS_DLL_IP_HARDCODED: u32 = 50;
 // =============================================================================
 
 /// `MagicMismatch` — File's actual format does not match its declared extension.
-pub const PTS_MAGIC_MISMATCH: u32 = 50;
+pub const PTS_MAGIC_MISMATCH: u32 = 25;
 
 /// `TextureHighEntropy` — Texture entropy above `ENTROPY_TEXTURE_HIGH`.
 /// Only fires for uncompressed formats (PNG/JPEG/WebP are exempt).
@@ -325,7 +325,7 @@ pub const PTS_META_FUTURE_TIMESTAMP: u32 = 20;
 // =============================================================================
 
 /// `PrefabInlineB64` — Long inline Base64 field inside a YAML prefab.
-pub const PTS_PREFAB_INLINE_B64: u32 = 8;
+pub const PTS_PREFAB_INLINE_B64: u32 = 3;
 
 /// `PrefabExcessiveGuids` — Binary prefab with an abnormal number of GUID refs.
 pub const PTS_PREFAB_EXCESSIVE_GUIDS: u32 = 5;
@@ -497,7 +497,7 @@ pub const FORBIDDEN_EXTENSIONS: &[&str] = &[
     "vbs", // VBScript
     "jar", // Java archive (can contain runnable code)
     "msi", // Windows installer
-    "com", // DOS/Windows legacy executable
+    // "com", // DOS/Windows legacy executable but also used for websites so idk
     "scr", // Windows screensaver (executable)
     "hta", // HTML Application (runs with system privileges)
     "pif", // Program Information File (executable shortcut)
@@ -523,13 +523,28 @@ pub const FORBIDDEN_EXTENSIONS: &[&str] = &[
 
 /// Domains whose URLs are treated as safe (no URL finding emitted).
 pub const SAFE_DOMAINS: &[&str] = &[
-    "vrchat.com",            // VRChat official platform & API
-    "unity3d.com",           // Unity legacy CDN and asset store
-    "unity.com",             // Unity website, package registry
-    "microsoft.com",         // NuGet feed, authentication endpoints
-    "github.com",            // Source repos, releases
-    "githubusercontent.com", // GitHub raw file hosting
-    "nuget.org",             // .NET package registry
-    "visualstudio.com",      // Azure DevOps, VS Marketplace
-    "windowsupdate.com",     // Windows Update (rare but legitimate in managed DLLs)
+    // Developer pages
+    "vrchat.com",               // VRChat official platform & API
+    "unity3d.com",              // Unity legacy CDN and asset store
+    "unity.com",                // Unity website, package registry
+    "microsoft.com",            // NuGet feed, authentication endpoints
+    "github.com",               // Source repos, releases
+    "githubusercontent.com",    // GitHub raw file hosting
+    "nuget.org",                // .NET package registry
+    "visualstudio.com",         // Azure DevOps, VS Marketplace
+    "windowsupdate.com",        // Windows Update (rare but legitimate in managed DLLs)
+    "thryrallo.de",             // Framework that powers the User Interface of poiyomi.
+    "stackexchange.com",        // Stack Exchange websites
+    "youtube.com",              // Youtube videos
+    "poiyomi.com",              // PoiYomi's website
+    "translate.googleapis.com", // Google Translate API
+    "cloud.google.com",         // Google Cloud Storage
+    // Credits pages
+    "gumroad.com", // Gumroad
+    "ko-fi.com",   // Ko-fi
+    "linktr.ee",   // Linktree
+    "twitter.com", // Twitter
+    "x.com",       // X
+    "discord.gg",  // Discord invites
+    "patreon.com", // Patreon
 ];

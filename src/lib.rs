@@ -4,6 +4,7 @@ pub mod config;
 pub mod ingestion;
 pub mod pipeline;
 pub mod report;
+pub mod sanitize;
 pub mod scoring;
 pub mod terminal;
 pub mod utils;

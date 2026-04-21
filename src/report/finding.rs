@@ -235,6 +235,10 @@ pub struct Finding {
     pub detail: String,
     /// Optional extra context (URL, function name, etc.)
     pub context: Option<String>,
+    /// 1-indexed line numbers where the pattern was found.
+    /// Empty for binary assets, DLLs, and package-level findings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub line_numbers: Vec<u64>,
 }
 
 impl Finding {
@@ -252,11 +256,19 @@ impl Finding {
             location: location.into(),
             detail: detail.into(),
             context: None,
+            line_numbers: Vec::new(),
         }
     }
 
     pub fn with_context(mut self, ctx: impl Into<String>) -> Self {
         self.context = Some(ctx.into());
+        self
+    }
+
+    /// Attach 1-indexed source line numbers where the pattern was matched.
+    /// Used by the sanitize module to know which lines to comment out.
+    pub fn with_line_numbers(mut self, lines: Vec<u64>) -> Self {
+        self.line_numbers = lines;
         self
     }
 }

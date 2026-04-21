@@ -57,7 +57,7 @@ fn detect_ansi() -> bool {
     // --- Windows: try to enable Virtual Terminal Processing via SetConsoleMode ---
     #[cfg(target_os = "windows")]
     {
-        return try_enable_vtp_windows();
+        try_enable_vtp_windows()
     }
 
     // --- Non-Windows fallback: assume support ---

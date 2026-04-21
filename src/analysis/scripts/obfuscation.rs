@@ -15,6 +15,10 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
     let base64_chars: f64 = base64_matches.iter().map(|m| m.len() as f64).sum();
 
     if total_chars > 0.0 && (base64_chars / total_chars) > OBFUSC_BASE64_RATIO {
+        let lines: Vec<u64> = base64_matches
+            .iter()
+            .map(|m| source[..m.start()].bytes().filter(|&b| b == b'\n').count() as u64 + 1)
+            .collect();
         findings.push(
             Finding::new(
                 FindingId::CsBase64HighRatio,
@@ -26,17 +30,26 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
             .with_context(format!(
                 "ratio={:.1}%",
                 (base64_chars / total_chars) * 100.0
-            )),
+            ))
+            .with_line_numbers(lines),
         );
     } else if !base64_matches.is_empty() && base64_matches.iter().any(|m| m.len() > 200) {
         // Very long individual Base64 strings are also suspicious
-        findings.push(Finding::new(
-            FindingId::CsBase64HighRatio,
-            Severity::Medium,
-            PTS_CS_BASE64_HIGH_RATIO / 2, // half points for the single-string variant
-            location,
-            "Long Base64 literal (>200 chars) in C# script",
-        ));
+        let lines: Vec<u64> = base64_matches
+            .iter()
+            .filter(|m| m.len() > 200)
+            .map(|m| source[..m.start()].bytes().filter(|&b| b == b'\n').count() as u64 + 1)
+            .collect();
+        findings.push(
+            Finding::new(
+                FindingId::CsBase64HighRatio,
+                Severity::Medium,
+                PTS_CS_BASE64_HIGH_RATIO / 2, // half points for the single-string variant
+                location,
+                "Long Base64 literal (>200 chars) in C# script",
+            )
+            .with_line_numbers(lines),
+        );
     }
 
     // 2. Obfuscated identifiers — detect scripts with many very short identifiers
@@ -72,25 +85,55 @@ pub fn analyze(source: &str, location: &str) -> Vec<Finding> {
     if source.contains("^ ") || source.contains("^=") {
         // Look for byte array + XOR combination
         if (source.contains("byte[]") || source.contains("byte [")) && (source.contains("^ ") || source.contains("^=")) {
-            findings.push(Finding::new(
-                FindingId::CsXorDecryption,
-                Severity::Medium,
-                PTS_CS_XOR_DECRYPTION,
-                location,
-                "XOR operation on byte array detected (possible string/code decryption)",
-            ));
+            let xor_lines: Vec<u64> = source
+                .lines()
+                .enumerate()
+                .filter_map(|(i, line)| {
+                    if (line.contains("^ ") || line.contains("^="))
+                        && (line.contains("byte") || source.contains("byte[]"))
+                    {
+                        Some(i as u64 + 1)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            findings.push(
+                Finding::new(
+                    FindingId::CsXorDecryption,
+                    Severity::Medium,
+                    PTS_CS_XOR_DECRYPTION,
+                    location,
+                    "XOR operation on byte array detected (possible string/code decryption)",
+                )
+                .with_line_numbers(xor_lines),
+            );
         }
     }
 
     // 4. Unicode escape sequences forming keywords
     if source.contains("\\u0") {
-        findings.push(Finding::new(
-            FindingId::CsUnicodeEscapes,
-            Severity::High,
-            PTS_CS_UNICODE_ESCAPES,
-            location,
-            "Unicode escape sequences in C# source (possible obfuscation of keywords/APIs)",
-        ));
+        let uni_lines: Vec<u64> = source
+            .lines()
+            .enumerate()
+            .filter_map(|(i, line)| {
+                if line.contains("\\u0") {
+                    Some(i as u64 + 1)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        findings.push(
+            Finding::new(
+                FindingId::CsUnicodeEscapes,
+                Severity::High,
+                PTS_CS_UNICODE_ESCAPES,
+                location,
+                "Unicode escape sequences in C# source (possible obfuscation of keywords/APIs)",
+            )
+            .with_line_numbers(uni_lines),
+        );
     }
 
     findings

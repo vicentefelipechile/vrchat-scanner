@@ -1,6 +1,6 @@
+use crate::config::*;
 use crate::report::{Finding, FindingId, Severity};
 use crate::utils::shannon_entropy;
-use crate::config::*;
 
 // Magic bytes for common image formats
 const PNG_MAGIC: &[u8] = &[0x89, 0x50, 0x4E, 0x47];
@@ -52,7 +52,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
         findings.push(
             Finding::new(
                 FindingId::MagicMismatch,
-                Severity::High,
+                Severity::Medium,
                 PTS_MAGIC_MISMATCH,
                 location,
                 "Magic bytes don't match the declared file extension",
@@ -77,7 +77,10 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
                     Severity::Medium,
                     PTS_TEXTURE_HIGH_ENTROPY,
                     location,
-                    format!("Texture file has high entropy {:.2} (possible embedded payload)", entropy),
+                    format!(
+                        "Texture file has high entropy {:.2} (possible embedded payload)",
+                        entropy
+                    ),
                 )
                 .with_context(format!("entropy={:.4}", entropy)),
             );
