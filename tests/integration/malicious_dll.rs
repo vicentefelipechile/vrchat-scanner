@@ -27,7 +27,7 @@ public class Malicious {
 }
 "#;
 
-    let findings = analyze_script(source, "Assets/Scripts/Malicious.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/Malicious.cs");
     let score: u32 = findings.iter().map(|f| f.points).sum();
 
     assert!(
@@ -46,7 +46,7 @@ public class Dropper {
     void Run() { System.Diagnostics.Process.Start("cmd.exe"); }
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/Dropper.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/Dropper.cs");
     let has_process = findings.iter().any(|f| f.id == FindingId::CsProcessStart);
     assert!(has_process, "CS_PROCESS_START not detected; findings: {:#?}", findings);
 
@@ -72,7 +72,7 @@ public class Loader {
     }
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/Loader.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/Loader.cs");
     let has = findings.iter().any(|f| f.id == FindingId::CsAssemblyLoadBytes);
     assert!(has, "CS_ASSEMBLY_LOAD_BYTES not found; got: {:#?}", findings);
 }
@@ -90,7 +90,7 @@ public class SaveLoad {
     }
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/SaveLoad.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/SaveLoad.cs");
     let has = findings.iter().any(|f| f.id == FindingId::CsBinaryFormatter);
     assert!(has, "CS_BINARY_FORMATTER not flagged; got: {:#?}", findings);
 }
@@ -105,7 +105,7 @@ public class NativeCall {
     private static extern void Execute();
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/NativeCall.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/NativeCall.cs");
     let has = findings.iter().any(|f| f.id == FindingId::CsDllimportUnknown);
     assert!(has, "CS_DLLIMPORT_UNKNOWN not detected; got: {:#?}", findings);
 }
@@ -119,7 +119,7 @@ public class RawMemory {
     }
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/RawMemory.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/RawMemory.cs");
     let has = findings.iter().any(|f| f.id == FindingId::CsUnsafeBlock);
     assert!(has, "CS_UNSAFE_BLOCK not found; got: {:#?}", findings);
 }
@@ -135,7 +135,7 @@ public class AutoRun {
     }
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/AutoRun.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/AutoRun.cs");
     let has = findings.iter().any(|f| f.id == FindingId::CsRegistryAccess);
     assert!(has, "CS_REGISTRY_ACCESS not detected; got: {:#?}", findings);
 }
@@ -148,7 +148,7 @@ public class CmdRunner {
     string ps = "powershell -EncodedCommand ZQBj";
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/CmdRunner.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/CmdRunner.cs");
     let has = findings.iter().any(|f| f.id == FindingId::CsShellStrings);
     assert!(has, "CS_SHELL_STRINGS not detected; got: {:#?}", findings);
 }
@@ -175,7 +175,7 @@ public class Danger {
 }
 "#;
 
-    let findings = analyze_script(source, "Assets/Scripts/Danger.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/Danger.cs");
     let (score, level) = compute_score(&findings);
 
     assert!(

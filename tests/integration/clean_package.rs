@@ -12,7 +12,7 @@ use vrcstorage_scanner::scoring::compute_score;
 fn clean_package_scores_low() {
     let clean_cs = include_str!("../fixtures/clean/clean_script.cs");
 
-    let findings = analyze_script(clean_cs, "Assets/Scripts/Clean.cs");
+    let findings = analyze_script(clean_cs.as_bytes(), clean_cs, "Assets/Scripts/Clean.cs");
     let score: u32 = findings.iter().map(|f| f.points).sum();
 
     assert!(
@@ -26,7 +26,7 @@ fn clean_package_scores_low() {
 #[test]
 fn clean_package_no_critical_findings() {
     let clean_cs = include_str!("../fixtures/clean/clean_script.cs");
-    let findings = analyze_script(clean_cs, "Assets/Scripts/Clean.cs");
+    let findings = analyze_script(clean_cs.as_bytes(), clean_cs, "Assets/Scripts/Clean.cs");
 
     let has_critical = findings
         .iter()
@@ -51,7 +51,7 @@ public class SoundManager : MonoBehaviour {
     }
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/SoundManager.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/SoundManager.cs");
     assert!(
         findings.is_empty(),
         "Debug.Log should not produce findings, got: {:#?}",
@@ -76,7 +76,7 @@ public class PickupItem : UdonSharpBehaviour {
     }
 }
 "#;
-    let findings = analyze_script(source, "Assets/UdonScripts/PickupItem.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/UdonScripts/PickupItem.cs");
     let score: u32 = findings.iter().map(|f| f.points).sum();
 
     assert!(

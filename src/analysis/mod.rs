@@ -102,7 +102,7 @@ pub fn run_all_analyses(tree: &PackageTree) -> (Vec<Finding>, AssetCounts, Analy
                 }
                 AssetType::Script => {
                     let source = String::from_utf8_lossy(&entry.bytes);
-                    findings.extend(scripts::analyze_script(&source, loc));
+                    findings.extend(scripts::analyze_script(&entry.bytes, &source, loc));
                 }
                 AssetType::Texture => {
                     findings.extend(assets::analyze_asset(&entry.bytes, &entry.asset_type, loc));

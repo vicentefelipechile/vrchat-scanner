@@ -16,7 +16,7 @@ use vrcstorage_scanner::utils::shannon_entropy;
 
 #[test]
 fn empty_script_produces_no_findings() {
-    let findings = analyze_script("", "Assets/Scripts/Empty.cs");
+    let findings = analyze_script(b"", "", "Assets/Scripts/Empty.cs");
     // Empty script should not crash and should produce no critical findings
     let critical: Vec<_> = findings
         .iter()
@@ -112,7 +112,7 @@ public class Telemetry {
     }
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/Telemetry.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/Telemetry.cs");
     let has = findings.iter().any(|f| f.id == FindingId::CsEnvironmentAccess);
     assert!(has, "CS_ENVIRONMENT_ACCESS not flagged; got: {:#?}", findings);
 }
@@ -128,7 +128,7 @@ public class RawPtr {
     }
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/RawPtr.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/RawPtr.cs");
     let has = findings.iter().any(|f| f.id == FindingId::CsMarshalOps);
     assert!(has, "CS_MARSHAL_OPS not detected; got: {:#?}", findings);
 }
@@ -143,7 +143,7 @@ public class DataExfil {
     }
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/DataExfil.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/DataExfil.cs");
     let has = findings.iter().any(|f| f.id == FindingId::CsFileWrite);
     assert!(has, "CS_FILE_WRITE not flagged for File.WriteAllText; got: {:#?}", findings);
 }
@@ -159,7 +159,7 @@ public class CodeGen {
     }
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/CodeGen.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/CodeGen.cs");
     let ref_emit: Vec<_> = findings.iter().filter(|f| f.id == FindingId::CsReflectionEmit).collect();
 
     if !ref_emit.is_empty() {

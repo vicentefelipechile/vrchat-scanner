@@ -8,3 +8,4 @@ pub mod sanitize;
 pub mod scoring;
 pub mod terminal;
 pub mod utils;
+pub mod whitelist;

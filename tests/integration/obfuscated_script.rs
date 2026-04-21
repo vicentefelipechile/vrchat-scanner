@@ -16,7 +16,7 @@ fn obfuscated_script_detected() {
         "SGVsbG8gV29ybGQhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISEh"
     );
 
-    let findings = analyze_script(&obfuscated_cs, "Assets/Scripts/Obfuscated.cs");
+    let findings = analyze_script(obfuscated_cs.as_bytes(), &obfuscated_cs, "Assets/Scripts/Obfuscated.cs");
 
     let has_obfuscation = findings
         .iter()
@@ -37,7 +37,7 @@ fn long_base64_literal_flagged() {
         b64 = b64
     );
 
-    let findings = analyze_script(&source, "Assets/Scripts/Enc.cs");
+    let findings = analyze_script(source.as_bytes(), &source, "Assets/Scripts/Enc.cs");
     let has = findings.iter().any(|f| f.id == FindingId::CsBase64HighRatio);
     assert!(has, "Long Base64 literal not flagged; findings: {:#?}", findings);
 }
@@ -58,7 +58,7 @@ public class A {
 }
 "#;
 
-    let findings = analyze_script(source, "Assets/Scripts/Obfuscated2.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/Obfuscated2.cs");
     let has = findings
         .iter()
         .any(|f| f.id == FindingId::CsObfuscatedIdentifiers);
@@ -83,7 +83,7 @@ public class Decrypt {
 }
 "#;
 
-    let findings = analyze_script(source, "Assets/Scripts/Decrypt.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/Decrypt.cs");
     let has = findings.iter().any(|f| f.id == FindingId::CsXorDecryption);
     assert!(has, "CS_XOR_DECRYPTION not flagged; findings: {:#?}", findings);
 }
@@ -93,7 +93,7 @@ fn unicode_escape_obfuscation_flagged() {
     // \u0053 = 'S' — classic string obfuscation in C#
     let source = "public class A { string cmd = \"\\u0063\\u006D\\u0064\"; }";
 
-    let findings = analyze_script(source, "Assets/Scripts/UnicodeObf.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/UnicodeObf.cs");
     let has = findings.iter().any(|f| f.id == FindingId::CsUnicodeEscapes);
     assert!(
         has,
@@ -113,7 +113,7 @@ public class UI : MonoBehaviour {
 }
 "#;
 
-    let findings = analyze_script(source, "Assets/Scripts/UI.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/UI.cs");
     let has_obfuscation = findings
         .iter()
         .any(|f| f.id == FindingId::CsObfuscatedIdentifiers || f.id == FindingId::CsBase64HighRatio);

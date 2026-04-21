@@ -8,6 +8,7 @@ mod scoring;
 mod server;
 mod terminal;
 mod utils;
+mod whitelist;
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;

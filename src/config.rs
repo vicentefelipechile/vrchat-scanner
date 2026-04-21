@@ -24,6 +24,7 @@
 //! | Obfuscation detection | `OBFUSC_*` |
 //! | Forbidden extensions | `FORBIDDEN_EXTENSIONS` |
 //! | Domain whitelist | `SAFE_DOMAINS` |
+//! | Known-file whitelist | `WHITELIST` / `WhitelistEntry` |
 
 // =============================================================================
 // 1. RISK SCORE BANDS
@@ -547,4 +548,127 @@ pub const SAFE_DOMAINS: &[&str] = &[
     "x.com",       // X
     "discord.gg",  // Discord invites
     "patreon.com", // Patreon
+];
+
+// =============================================================================
+// 9. KNOWN-FILE WHITELIST
+//
+// C# files listed here are treated differently depending on whether their
+// SHA-256 matches a known-good hash:
+//
+//   • Hash match  → FullyTrusted : no findings emitted at all.
+//   • Hash mismatch / no hashes registered
+//                 → Modified     : only obfuscation checks run, and every
+//                                  finding gets extra context attached.
+//
+// To add a new trusted file:
+//   1. Append a WhitelistEntry to WHITELIST below.
+//   2. Set path_patterns to uniquely identify the file's internal Unity path.
+//   3. Add SHA-256 hashes of known-good versions to sha256_hashes.
+//   4. Optionally set expected_line_range to the normal line-count range.
+//
+// To register a new hash for an existing entry, append it to sha256_hashes.
+// =============================================================================
+
+/// A single entry in the known-file whitelist.
+/// See `src/whitelist.rs` for the verification logic that consumes this type.
+pub struct WhitelistEntry {
+    /// Human-readable name of the file/package (used in finding context messages).
+    pub name: &'static str,
+    /// All substrings must appear in the asset path for this entry to match
+    /// (case-sensitive, AND logic).
+    pub path_patterns: &'static [&'static str],
+    /// SHA-256 hex strings (lowercase) for each known-good version.
+    /// Leave empty while no hashes have been registered — the file will be
+    /// treated as Modified (obfuscation-only analysis) until hashes are added.
+    pub sha256_hashes: &'static [&'static str],
+    /// Acceptable line-count range (inclusive both ends).
+    /// `None` means no line-count check is performed.
+    pub expected_line_range: Option<(usize, usize)>,
+}
+
+/// The list of known standard C# files that should not be flagged as malicious.
+/// **Edit only this slice** to manage the whitelist.
+pub static WHITELIST: &[WhitelistEntry] = &[
+    // == Poiyomi Toon Shader ===================================================
+    WhitelistEntry {
+        name: "Poiyomi Toon - Localization",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "ThryEditor", "Editor", "Localization"],
+        sha256_hashes: &[
+            "0d5c54207ec13e6583eba4d79628539658e9d46842a17175502df9a0fdf14694",
+        ],
+        expected_line_range: Some((673, 674)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - PoiOutlineUtil",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "poi-tools", "Editor", "Tools and Editors", "PoiOutlineUtil"],
+        sha256_hashes: &[
+            "033d5681c9cda2c80b4e7af794bcb3f3f3fa06d6eb2283d97dbf413ca64cfd50",
+        ],
+        expected_line_range: Some((686, 687)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - ThirdPartyIncluder",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "poi-tools", "Editor", "Export Stuff", "ThirdPartyIncluder"],
+        sha256_hashes: &[
+            "7505b4bf8700f1119ed0960b5a1ed26433f7e0793763ff4b34ced1332f1182d6",
+        ],
+        expected_line_range: Some((219, 220)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - PoiHelpers",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "poi-tools", "Editor", "Helpers and Extensions", "PoiHelpers"],
+        sha256_hashes: &[
+            "8845fe7e02a2ff316477dd3675d7be3a6d0175d56f5ff13acefaa40e27f7620b",
+        ],
+        expected_line_range: Some((279, 280)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - PoiSettingsUtility",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "poi-tools", "Editor", "PoiSettingsUtility"],
+        sha256_hashes: &[
+            "6678e7ff492fc71ec825e34106e0986224c2f3b211cabc8433099b494e7ba08d",
+        ],
+        expected_line_range: Some((102, 103)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - Presets",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "ThryEditor", "Editor", "Presets"],
+        sha256_hashes: &[
+            "eaf18df7c3faaf699877068f0465dc850d8490622ba4668cce427cc8af5cc272",
+        ],
+        expected_line_range: Some((974, 975)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - InspectorCapture",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "ThryEditor", "Editor", "Debug", "InspectorCapture"],
+        sha256_hashes: &[
+            "45959564f26da89f04992fe2a7250b5a5135b7ca072ce86c0f5c2ece4eadf3d1",
+        ],
+        expected_line_range: Some((185, 186)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - FileHelper",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "ThryEditor", "Editor", "Helpers", "FileHelper"],
+        sha256_hashes: &[
+            "b7eb17fc7ca403caf4da4c0a559b4a81a81ec557a469698599b67c9af59b695f",
+        ],
+        expected_line_range: Some((137, 138)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - TrashHandler",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "ThryEditor", "Editor", "Helpers", "TrashHandler"],
+        sha256_hashes: &[
+            "7492e934475d95d8cf086bed99b072f38fe0f25ec11c9cf3b3cb0180df6c5667",
+        ],
+        expected_line_range: Some((50, 51)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - Helper",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "ThryEditor", "Editor", "Helpers", "Helper"],
+        sha256_hashes: &[
+            "64251b638c73a5f80ccebf2f07b8d22c9662067d8f6d0d60921423f64f35e81d",
+        ],
+        expected_line_range: Some((323, 324)),
+    },
 ];

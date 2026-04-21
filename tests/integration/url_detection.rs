@@ -20,7 +20,7 @@ public class Updater {
     }
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/Updater.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/Updater.cs");
     let has = findings.iter().any(|f| f.id == FindingId::CsUrlUnknownDomain);
     assert!(has, "CS_URL_UNKNOWN_DOMAIN not flagged; got: {:#?}", findings);
 }
@@ -38,7 +38,7 @@ public class C2 {
     }
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/C2.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/C2.cs");
     let has = findings.iter().any(|f| f.id == FindingId::CsIpHardcoded);
     assert!(has, "CS_IP_HARDCODED not detected; got: {:#?}", findings);
 }
@@ -53,7 +53,7 @@ public class WebPanel : MonoBehaviour {
     string url = "https://vrchat.com/home";
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/WebPanel.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/WebPanel.cs");
 
     // vrchat.com is on the safe-domain whitelist — should NOT produce URL findings
     let url_findings: Vec<_> = findings
@@ -74,7 +74,7 @@ public class Info {
     string repo = "https://github.com/vrchat-community/UdonSharp";
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/Info.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/Info.cs");
     let url_findings: Vec<_> = findings
         .iter()
         .filter(|f| f.id == FindingId::CsUrlUnknownDomain || f.id == FindingId::CsIpHardcoded)
@@ -96,7 +96,7 @@ public class D {
     string c = "https://another-bad-domain.net/b"; // distinct
 }
 "#;
-    let findings = analyze_script(source, "Assets/Scripts/D.cs");
+    let findings = analyze_script(source.as_bytes(), source, "Assets/Scripts/D.cs");
     let url_findings: Vec<_> = findings
         .iter()
         .filter(|f| f.id == FindingId::CsUrlUnknownDomain)

@@ -111,11 +111,13 @@ vrcstorage-scanner/
 │   ├── server/
 │   │   └── mod.rs              ← axum server: POST /scan, GET /health
 │   │
-│   └── utils/
+│   ├── utils/
 │       ├── mod.rs              ← re-exports shannon_entropy, ScannerError, Result
 │       ├── entropy.rs          ← shannon_entropy(&[u8]) → f64
 │       ├── error.rs            ← ScannerError (thiserror), Result alias
 │       └── patterns.rs         ← lazy_static! centralized Regex + re-exports SAFE_DOMAINS from config
+│
+└── whitelist.rs            ← check(location, data, source) → WhitelistVerdict
 │
 ├── tests/
 │   ├── integration.rs          ← entry point (includes integration/ modules)
@@ -178,7 +180,7 @@ Input (path or bytes)
 - **Single source of truth** for every tuneable constant: point values (`PTS_*`), entropy thresholds
   (`ENTROPY_*`), score band boundaries (`SCORE_*_MAX`), context reductions (`REDUCE_*`),
   package-level thresholds (`THRESHOLD_*`), obfuscation parameters (`OBFUSC_*`), forbidden
-  extensions (`FORBIDDEN_EXTENSIONS`), and the domain whitelist (`SAFE_DOMAINS`).
+  extensions (`FORBIDDEN_EXTENSIONS`), the domain whitelist (`SAFE_DOMAINS`), and the known-file whitelist (`WHITELIST`).
 - Declared as `pub mod config` in **both** `lib.rs` and `main.rs`. This is required because the
   project has two crate roots: `lib.rs` (used by tests) and `main.rs` (the binary). Omitting
   `mod config` from either root causes `E0432` import errors in that compilation context.
@@ -250,6 +252,14 @@ Input (path or bytes)
 - `patterns.rs` — **all `Regex` used in the project must live here** as `lazy_static!`.
   Also re-exports `SAFE_DOMAINS` from `crate::config` so callers only need one import.
 
+### `whitelist`
+
+- `WhitelistVerdict` — typed enum (`FullyTrusted`, `Modified`, `NotWhitelisted`).
+- `check(location, data, source)` — evaluates a C# script against `crate::config::WHITELIST`.
+  If the location matches and the computed SHA-256 matches a known hash, returns `FullyTrusted` (skips all findings).
+  If the location matches but the hash mismatches (or is not yet registered), returns `Modified` (runs obfuscation
+  checks only and appends extra context).
+
 ---
 
 ## 5. Code Conventions
@@ -272,6 +282,7 @@ mod scoring;
 mod server;
 mod terminal; // ← TermCaps capability detection
 mod utils;
+mod whitelist; // ← Known-file whitelist evaluation
 ```
 
 Omitting `mod config;` from `main.rs` produces 13 `E0432` errors because `crate::config` is
@@ -326,6 +337,7 @@ pub fn analyze(data: &[u8], location: &str) -> (PeInfo, Vec<Finding>)   // pe_pa
 pub fn analyze(data: &[u8], location: &str) -> Vec<Finding>             // import_scanner, string_extractor, dotnet_scanner
 
 // Scripts
+pub fn analyze_script(data: &[u8], source: &str, location: &str) -> Vec<Finding> // mod.rs
 pub fn analyze(source: &str, location: &str) -> Vec<Finding>            // pattern_matcher, url_extractor, obfuscation
 
 // Assets
