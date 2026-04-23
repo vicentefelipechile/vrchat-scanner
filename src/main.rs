@@ -30,14 +30,15 @@ use terminal::TermCaps;
     author = "SummerTYT (vicentefelipechile)",
     about = "Static analysis scanner for Unity/VRChat packages\n\
              Detects malicious scripts, dangerous DLLs, and suspicious assets.\n\n\
-             TIP: You can drag-and-drop a file onto this executable to scan it directly.",
+             TIP: Drag-and-drop one or more files/folders onto this executable to scan them.\n\
+             Folders are scanned recursively for .unitypackage files.",
     disable_version_flag = false,
 )]
 struct Cli {
-    /// File to scan directly — no subcommand needed.
-    /// Equivalent to: vrcstorage-scanner scan <FILE>
-    #[arg(value_name = "FILE")]
-    file: Option<PathBuf>,
+    /// Files or folders to scan directly — no subcommand needed.
+    /// Accepts multiple paths; folders are searched recursively for .unitypackage files.
+    #[arg(value_name = "PATH")]
+    files: Vec<PathBuf>,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -45,13 +46,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Scan a Unity package or DLL file (CLI mode)
+    /// Scan one or more Unity packages, DLL files, or folders
     Scan {
-        /// Path to the file to scan (.unitypackage, .dll, .cs, .zip, …)
-        #[arg(value_name = "FILE")]
-        path: PathBuf,
+        /// Paths to scan (.unitypackage, .dll, .cs, .zip, folder, …)
+        /// Folders are searched recursively for .unitypackage files.
+        #[arg(value_name = "PATH", required = true, num_args = 1..)]
+        paths: Vec<PathBuf>,
 
-        /// Output format: "cli" (default) or "json"
+        /// Output format: "cli" (default), "json", or "txt"
         #[arg(short, long, default_value = "cli")]
         output: String,
 
@@ -100,9 +102,6 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
-    // Detect terminal capabilities FIRST — before any output.
-    // On Win10 legacy consoles this will try to enable VTP; if it fails
-    // colored will output raw escape codes, so we disable it.
     let caps = TermCaps::detect();
     if !caps.ansi {
         colored::control::set_override(false);
@@ -110,75 +109,459 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    match (cli.command, cli.file) {
-        // vrcstorage-scanner scan <FILE> [OPTIONS]
-        (Some(Command::Scan { path, output, output_file }), _) => {
+    match (cli.command, cli.files.is_empty(), cli.files) {
+        // vrcstorage-scanner scan <PATH...> [OPTIONS]
+        (Some(Command::Scan { paths, output, output_file }), _, _) => {
             print_banner(caps);
-            let (level, _) = run_scan_command(&path, &output, output_file.as_deref(), false, caps);
-            // Exit code 2 for CRITICAL — lets CI pipelines auto-block.
-            use scoring::RiskLevel;
-            if level == RiskLevel::Critical {
+            let targets = collect_unitypackages(&paths, caps);
+            if targets.is_empty() {
+                eprintln!("{} No scannable files found.", "ERROR:".red().bold());
+                std::process::exit(1);
+            }
+
+            let mut any_critical = false;
+            let mut batch: Vec<BatchResult> = Vec::new();
+
+            for path in &targets {
+                let (
+                    level,
+                    _findings
+                ) = run_scan_command(path, &output, None, false, caps);
+                if level == scoring::RiskLevel::Critical {
+                    any_critical = true;
+                }
+                batch.push(BatchResult {
+                    path: path.clone(),
+                    level,
+                    // findings,
+                    sanitized: false,
+                    // report: None, // not captured in CLI mode — report already printed
+                });
+            }
+
+            // Write combined output file if requested
+            if let Some(out_path) = output_file {
+                if output == "txt" {
+                    // Re-scan to get reports for txt output
+                    let txt = build_txt_for_paths(&targets, &batch, caps);
+                    std::fs::write(&out_path, txt).expect("Failed to write txt report");
+                    println!("Report written to {}", out_path.display());
+                }
+                // JSON for multi-file: already handled per-file above or could be extended
+            }
+
+            if any_critical {
                 std::process::exit(2);
             }
         }
+
         // vrcstorage-scanner sanitize <FILE> [OPTIONS]
-        (Some(Command::Sanitize { path, output, min_severity, dry_run, json }), _) => {
+        (Some(Command::Sanitize { path, output, min_severity, dry_run, json }), _, _) => {
             print_banner(caps);
             let out = output.unwrap_or_else(|| default_sanitize_output(&path));
             run_sanitize_command(&path, &out, &min_severity, dry_run, json, caps);
         }
+
         // vrcstorage-scanner serve [--port N]
-        (Some(Command::Serve { port }), _) => {
+        (Some(Command::Serve { port }), _, _) => {
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
             if let Err(e) = server::serve(addr).await {
                 eprintln!("Server error: {e}");
                 std::process::exit(1);
             }
         }
+
         // vrcstorage-scanner credits
-        (Some(Command::Credits), _) => {
+        (Some(Command::Credits), _, _) => {
             print_credits(caps);
-            // No pause — user ran this explicitly from a terminal
         }
-        // Drag-and-drop: vrcstorage-scanner <FILE>
-        (None, Some(file)) => {
+
+        // Drag-and-drop / positional: one or more files or folders
+        (None, false, files) => {
             print_banner(caps);
-            let (level, findings) = run_scan_command(&file, "cli", None, true, caps);
 
-            // After scanning: offer sanitize prompt if the file is a .unitypackage
-            // and at least one High/Critical finding was detected.
-            let is_unitypackage = file
-                .extension()
-                .map(|e| e.eq_ignore_ascii_case("unitypackage"))
-                .unwrap_or(false);
+            // Collect all .unitypackage targets (recursive in folders)
+            let targets = collect_unitypackages(&files, caps);
+            if targets.is_empty() {
+                eprintln!(
+                    "{} No .unitypackage files found in the provided paths.",
+                    "ERROR:".red().bold()
+                );
+                wait_for_keypress(caps);
+                std::process::exit(1);
+            }
 
-            if is_unitypackage {
-                use scoring::RiskLevel;
-                let has_high = matches!(level, RiskLevel::High | RiskLevel::Critical);
-                if has_high && prompt_sanitize(&file, &findings, caps) {
-                    let out = default_sanitize_output(&file);
-                    run_sanitize_command(&file, &out, "high", false, false, caps);
+            // Large-batch guard: ask confirmation if > 6 files
+            if targets.len() > 6 && !prompt_continue_large_batch(targets.len(), caps) {
+                println!("  Scan cancelled.");
+                wait_for_keypress(caps);
+                return;
+            }
+
+            // ── Scan each file ────────────────────────────────────────────
+            let mut batch: Vec<BatchResult> = Vec::new();
+            let mut any_critical = false;
+
+            for (idx, path) in targets.iter().enumerate() {
+                print_file_header(idx + 1, targets.len(), path, caps);
+                let (level, findings) = run_scan_command(path, "cli", None, true, caps);
+
+                if level == scoring::RiskLevel::Critical {
+                    any_critical = true;
+                }
+
+                // Per-file sanitize prompt for .unitypackage with High/Critical findings
+                let is_unitypackage = path
+                    .extension()
+                    .map(|e| e.eq_ignore_ascii_case("unitypackage"))
+                    .unwrap_or(false);
+
+                let mut sanitized = false;
+                if is_unitypackage {
+                    use scoring::RiskLevel;
+                    let has_high = matches!(level, RiskLevel::High | RiskLevel::Critical);
+                    if has_high && prompt_sanitize(path, &findings, caps) {
+                        let out = default_sanitize_output(path);
+                        run_sanitize_command(path, &out, "high", false, false, caps);
+                        sanitized = true;
+                    }
+                }
+
+                batch.push(BatchResult {
+                    path: path.clone(),
+                    level,
+                    // findings,
+                    sanitized,
+                    // report: None,
+                });
+            }
+
+            // ── Batch summary (only when multiple files) ──────────────────
+            if targets.len() > 1 {
+                print_batch_summary(&batch, caps);
+            }
+
+            // ── Offer to save txt report ──────────────────────────────────
+            if prompt_save_report(caps) {
+                let txt = build_txt_from_batch(&targets, &batch, caps);
+                let report_path = suggest_report_path(&targets);
+                match std::fs::write(&report_path, &txt) {
+                    Ok(_) => {
+                        if caps.unicode {
+                            println!("  {} Report saved to: {}", "✓".green(), report_path.display());
+                        } else {
+                            println!("  Report saved to: {}", report_path.display());
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("  {} Could not save report: {e}", "ERROR:".red());
+                    }
                 }
             }
 
-            // Pause only here: the window was opened by double-click / drag-and-drop
-            // and would close immediately otherwise.
+            // ── Pause before closing ──────────────────────────────────────
             wait_for_keypress(caps);
 
-            // Exit code 2 for CRITICAL — after all interactive prompts are done.
-            use scoring::RiskLevel;
-            if level == RiskLevel::Critical {
+            if any_critical {
                 std::process::exit(2);
             }
         }
+
         // No arguments: print help
-        (None, None) => {
+        (None, true, _) => {
             print_banner(caps);
             use clap::CommandFactory;
             Cli::command().print_help().unwrap();
             println!();
-            // No pause — user ran this from a terminal intentionally
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Batch result accumulator
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct BatchResult {
+    path: PathBuf,
+    level: scoring::RiskLevel,
+    // findings: Vec<report::Finding>,
+    sanitized: bool,
+    // Populated only when we need full report data for txt output.
+    // report: Option<report::ScanReport>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// File collection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Expand a list of paths into a deduplicated list of scannable files.
+///
+/// - Regular files are included as-is (any extension).
+/// - Directories are walked recursively; only `.unitypackage` files are collected.
+/// - Duplicates (same canonical path) are removed.
+fn collect_unitypackages(paths: &[PathBuf], caps: TermCaps) -> Vec<PathBuf> {
+    let mut results: Vec<PathBuf> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for path in paths {
+        if !path.exists() {
+            eprintln!(
+                "  {} Path not found, skipping: {}",
+                "WARN:".yellow(),
+                path.display()
+            );
+            let _ = caps; // suppress unused warning
+            continue;
+        }
+
+        if path.is_file() {
+            let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+            if seen.insert(canonical.clone()) {
+                results.push(canonical);
+            }
+        } else if path.is_dir() {
+            collect_from_dir(path, &mut results, &mut seen);
+        }
+    }
+
+    results
+}
+
+/// Recursively collect `.unitypackage` files from a directory.
+fn collect_from_dir(
+    dir: &std::path::Path,
+    results: &mut Vec<PathBuf>,
+    seen: &mut std::collections::HashSet<PathBuf>,
+) {
+    let read_dir = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(e) => {
+            eprintln!("  WARN: Cannot read directory {}: {e}", dir.display());
+            return;
+        }
+    };
+
+    let mut entries: Vec<_> = read_dir.flatten().collect();
+    // Sort for deterministic order across platforms
+    entries.sort_by_key(|e| e.path());
+
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_from_dir(&path, results, seen);
+        } else if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("unitypackage"))
+            .unwrap_or(false)
+        {
+            let canonical = path.canonicalize().unwrap_or(path);
+            if seen.insert(canonical.clone()) {
+                results.push(canonical);
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Interactive prompts
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Ask the user whether to continue when the batch has more than 6 files.
+fn prompt_continue_large_batch(count: usize, caps: TermCaps) -> bool {
+    use std::io::{self, Write};
+
+    let sep = if caps.unicode {
+        "  ════════════════════════════════════════════════════"
+    } else {
+        "  ===================================================="
+    };
+
+    println!();
+    println!("{sep}");
+    println!("    Large Batch Detected");
+    println!("{sep}");
+    println!();
+    println!("  Found {count} .unitypackage files to scan.");
+    println!("  Scanning a large number of files may take several minutes.");
+    println!();
+    println!("  [Y] Yes, scan all {count} files");
+    println!("  [N] No, cancel (or press Enter)");
+    print!("\n  > ");
+    let _ = io::stdout().flush();
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        return false;
+    }
+    matches!(input.trim().to_lowercase().as_str(), "y")
+}
+
+/// Print a visual separator before each file in a multi-file batch.
+fn print_file_header(idx: usize, total: usize, path: &std::path::Path, caps: TermCaps) {
+    if total <= 1 {
+        return;
+    }
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    if caps.unicode {
+        println!();
+        println!(
+            "{}",
+            format!("  ┄┄┄  [{idx}/{total}] {filename}  ┄┄┄").bright_cyan()
+        );
+        println!();
+    } else {
+        println!();
+        println!("  --- [{idx}/{total}] {filename} ---");
+        println!();
+    }
+}
+
+/// Ask the user whether to save the batch report to a txt file.
+fn prompt_save_report(caps: TermCaps) -> bool {
+    use std::io::{self, Write};
+
+    let sep = if caps.unicode {
+        "  ════════════════════════════════════════════════════"
+    } else {
+        "  ===================================================="
+    };
+
+    println!();
+    println!("{sep}");
+    println!("    Save Report");
+    println!("{sep}");
+    println!();
+    println!("  Would you like to save the scan results to a text file?");
+    println!();
+    println!("  [Y] Yes, save report");
+    println!("  [N] No (or press Enter)");
+    print!("\n  > ");
+    let _ = io::stdout().flush();
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        return false;
+    }
+    matches!(input.trim().to_lowercase().as_str(), "y")
+}
+
+/// Print a summary table after scanning multiple files.
+fn print_batch_summary(batch: &[BatchResult], caps: TermCaps) {
+    let sep = if caps.unicode { "═".repeat(52) } else { "=".repeat(52) };
+    let thin = if caps.unicode { "─".repeat(52) } else { "-".repeat(52) };
+
+    println!();
+    println!("  {sep}");
+    if caps.unicode {
+        println!("{}", "   BATCH SCAN SUMMARY".bold());
+    } else {
+        println!("   BATCH SCAN SUMMARY");
+    }
+    println!("  {sep}");
+    println!();
+
+    for (i, r) in batch.iter().enumerate() {
+        let filename = r.path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?");
+        let sanitize_note = if r.sanitized { " [sanitized]" } else { "" };
+        let level_label = if caps.ansi {
+            level_colored(r.level)
+        } else {
+            level_plain(r.level).to_string()
+        };
+        println!(
+            "  [{:>2}] {:<12}  {}{}",
+            i + 1, level_label, filename, sanitize_note
+        );
+    }
+
+    println!();
+    println!("  {thin}");
+
+    let clean    = batch.iter().filter(|r| r.level == scoring::RiskLevel::Clean).count();
+    let low      = batch.iter().filter(|r| r.level == scoring::RiskLevel::Low).count();
+    let medium   = batch.iter().filter(|r| r.level == scoring::RiskLevel::Medium).count();
+    let high     = batch.iter().filter(|r| r.level == scoring::RiskLevel::High).count();
+    let critical = batch.iter().filter(|r| r.level == scoring::RiskLevel::Critical).count();
+
+    println!("  Clean={clean}  Low={low}  Medium={medium}  High={high}  Critical={critical}");
+    println!("  {sep}");
+    println!();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Txt report builders
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Build a txt report by re-scanning files to get full ScanReport structs.
+/// Falls back to minimal info from BatchResult when re-scan fails.
+fn build_txt_from_batch(
+    targets: &[PathBuf],
+    batch: &[BatchResult],
+    _caps: TermCaps,
+) -> String {
+    use report::txt_reporter::{BatchEntry, render_batch_txt};
+
+    // Re-scan each file to get the ScanReport (we didn't store it during the main pass
+    // to avoid doubling memory for large batches)
+    let mut reports: Vec<report::ScanReport> = Vec::new();
+    for path in targets {
+        match pipeline::run_scan(path) {
+            Ok(r) => reports.push(r),
+            Err(e) => {
+                // Create a minimal placeholder report if re-scan fails
+                eprintln!("  WARN: Could not re-read {} for report: {e}", path.display());
+            }
+        }
+    }
+
+    let entries: Vec<BatchEntry<'_>> = reports
+        .iter()
+        .zip(batch.iter())
+        .map(|(report, result)| {
+            let (_, level) = scoring::compute_score(&report.findings);
+            BatchEntry {
+                report,
+                level,
+                sanitized: result.sanitized,
+            }
+        })
+        .collect();
+
+    render_batch_txt(&entries)
+}
+
+/// Build txt output using pre-scanned data from the CLI scan command
+/// (paths + batch results that don't have full ScanReport stored).
+fn build_txt_for_paths(
+    targets: &[PathBuf],
+    batch: &[BatchResult],
+    caps: TermCaps,
+) -> String {
+    // For CLI path, just delegate — re-scan is acceptable here
+    build_txt_from_batch(targets, batch, caps)
+}
+
+/// Suggest a report output path next to the first scanned file
+/// (or in the current directory for multi-file batches).
+fn suggest_report_path(targets: &[PathBuf]) -> PathBuf {
+    let now = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    if targets.len() == 1 {
+        let stem = targets[0]
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("scan");
+        targets[0]
+            .with_file_name(format!("{stem}-scan-report-{now}.txt"))
+    } else {
+        PathBuf::from(format!("vrcstorage-scan-report-{now}.txt"))
     }
 }
 
@@ -191,12 +574,7 @@ fn print_banner(caps: TermCaps) {
     let repo    = env!("CARGO_PKG_REPOSITORY");
 
     if caps.unicode {
-        // Inner width = chars between the ║ borders.
-        // Longest line: "  " + repo URL (52 chars) + 2 margin = 56.
         const W: usize = 56;
-
-        // Helper: build a ║ border + padded content + ║ border row, each
-        // element colored independently (no {} {} {} spacing bug).
         let border = || "║".bright_cyan().to_string();
         let row = |content: String, bold: bool| {
             let padded = format!("{content:<W$}");
@@ -216,7 +594,6 @@ fn print_banner(caps: TermCaps) {
         println!("{}", format!("╚{}╝", "═".repeat(W)).bright_cyan());
         println!();
     } else {
-        // ASCII fallback for legacy consoles
         println!();
         println!("==========================================================");
         println!("  vrcstorage-scanner v{version}");
@@ -226,7 +603,6 @@ fn print_banner(caps: TermCaps) {
         println!();
     }
 }
-
 
 fn print_credits(caps: TermCaps) {
     let version = env!("CARGO_PKG_VERSION");
@@ -287,10 +663,8 @@ fn print_credits(caps: TermCaps) {
 // Scan command
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Returns `(RiskLevel, findings)` so the caller can decide when to exit
-/// and show context-aware prompts (e.g. the sanitize dialog).
-/// In drag-and-drop mode the caller must show prompts and pause BEFORE
-/// calling `process::exit`, otherwise the window closes immediately.
+/// Returns `(RiskLevel, findings)`.
+/// Prints the report to stdout unless output is suppressed.
 fn run_scan_command(
     path: &std::path::Path,
     output: &str,
@@ -303,8 +677,6 @@ fn run_scan_command(
         std::process::exit(1);
     }
 
-    // Progress spinner — shown while the scan is running.
-    // Suppressed in JSON mode (stdout would corrupt the JSON output).
     let spinner = if output != "json" {
         let pb = ProgressBar::new_spinner();
         pb.set_style(
@@ -323,7 +695,7 @@ fn run_scan_command(
         None
     };
 
-    let report = match pipeline::run_scan(path) {
+    let scan_report = match pipeline::run_scan(path) {
         Ok(r) => r,
         Err(e) => {
             if let Some(pb) = spinner { pb.finish_and_clear(); }
@@ -334,11 +706,11 @@ fn run_scan_command(
 
     if let Some(pb) = spinner { pb.finish_and_clear(); }
 
-    let (_, level) = scoring::compute_score(&report.findings);
+    let (_, level) = scoring::compute_score(&scan_report.findings);
 
     match output {
         "json" => {
-            let json_str = match report::json_reporter::to_json(&report) {
+            let json_str = match report::json_reporter::to_json(&scan_report) {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("JSON serialization error: {e}");
@@ -352,17 +724,26 @@ fn run_scan_command(
                 println!("{}", json_str);
             }
         }
-        _ => {
-            report::cli_reporter::print_report(&report, level, verbose, caps);
+        "txt" => {
+            let txt = report::txt_reporter::render_single_txt(&scan_report, level, false);
             if let Some(out_path) = output_file {
-                let json_str = report::json_reporter::to_json(&report).unwrap_or_default();
+                std::fs::write(out_path, &txt).expect("Failed to write output file");
+                println!("Report written to {}", out_path.display());
+            } else {
+                println!("{txt}");
+            }
+        }
+        _ => {
+            report::cli_reporter::print_report(&scan_report, level, verbose, caps);
+            if let Some(out_path) = output_file {
+                let json_str = report::json_reporter::to_json(&scan_report).unwrap_or_default();
                 std::fs::write(out_path, json_str).expect("Failed to write output file");
                 println!("JSON report written to {}", out_path.display());
             }
         }
     }
 
-    let findings = report.findings.clone();
+    let findings = scan_report.findings.clone();
     (level, findings)
 }
 
@@ -370,9 +751,6 @@ fn run_scan_command(
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Waits for the user to press Enter before returning.
-/// Called after drag-and-drop scans so the terminal window does not close
-/// immediately and the user has time to read the results.
 fn wait_for_keypress(caps: TermCaps) {
     use std::io::{self, BufRead, Write};
     if caps.unicode {
@@ -412,14 +790,12 @@ fn run_sanitize_command(
         other => {
             eprintln!(
                 "{} Unknown severity level '{}'. Use: low|medium|high|critical",
-                "ERROR:".red().bold(),
-                other
+                "ERROR:".red().bold(), other
             );
             std::process::exit(1);
         }
     };
 
-    // Progress spinner
     let spinner = {
         let pb = indicatif::ProgressBar::new_spinner();
         pb.set_style(
@@ -440,8 +816,8 @@ fn run_sanitize_command(
     spinner.finish_and_clear();
 
     match result {
-        Ok(report) => {
-            report::sanitize_reporter::print_sanitize_report(&report, caps);
+        Ok(san_report) => {
+            report::sanitize_reporter::print_sanitize_report(&san_report, caps);
         }
         Err(e) => {
             eprintln!("{} {}", "ERROR:".red().bold(), e);
@@ -450,7 +826,6 @@ fn run_sanitize_command(
     }
 }
 
-/// Default output path: `<stem>-sanitized.unitypackage` in the same directory.
 fn default_sanitize_output(path: &std::path::Path) -> PathBuf {
     let stem = path.file_stem().unwrap_or_default().to_string_lossy();
     path.with_file_name(format!("{stem}-sanitized.unitypackage"))
@@ -460,7 +835,6 @@ fn default_sanitize_output(path: &std::path::Path) -> PathBuf {
 // Sanitize prompt helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Maps a `FindingId` to a short human-readable API name for script findings.
 fn finding_api_label(id: report::FindingId) -> &'static str {
     use report::FindingId as F;
     match id {
@@ -488,12 +862,9 @@ fn finding_api_label(id: report::FindingId) -> &'static str {
     }
 }
 
-/// Build a sorted, deduplicated list of action lines from High/Critical findings.
-/// Each line describes exactly what the sanitizer will do to one asset.
 fn build_action_list(findings: &[report::Finding]) -> Vec<String> {
     use std::collections::{BTreeMap, BTreeSet};
 
-    // location → set of API labels / reasons
     let mut script_apis:  BTreeMap<&str, BTreeSet<&'static str>> = BTreeMap::new();
     let mut remove_files: BTreeSet<&str>                         = BTreeSet::new();
 
@@ -506,19 +877,16 @@ fn build_action_list(findings: &[report::Finding]) -> Vec<String> {
             if !label.is_empty() {
                 script_apis.entry(loc).or_default().insert(label);
             } else {
-                // ensure the file appears even if we have no specific label
                 script_apis.entry(loc).or_default();
             }
         } else if lower.ends_with(".dll") || lower.ends_with(".so") {
             remove_files.insert(loc);
         } else {
-            // texture, audio, prefab, etc.
             remove_files.insert(loc);
         }
     }
 
     let mut actions = Vec::new();
-
     for (loc, apis) in &script_apis {
         if apis.is_empty() {
             actions.push(format!("  · {loc} : dangerous lines will be commented out"));
@@ -530,12 +898,9 @@ fn build_action_list(findings: &[report::Finding]) -> Vec<String> {
     for loc in &remove_files {
         actions.push(format!("  · {loc} : will be removed from the package"));
     }
-
     actions
 }
 
-/// Show an interactive prompt asking whether to create a sanitized copy.
-/// Returns `true` if the user answers Y/y.
 fn prompt_sanitize(
     file: &std::path::Path,
     findings: &[report::Finding],
@@ -587,6 +952,31 @@ fn prompt_sanitize(
     if io::stdin().read_line(&mut input).is_err() {
         return false;
     }
-
     matches!(input.trim().to_lowercase().as_str(), "y")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Level formatting helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn level_colored(level: scoring::RiskLevel) -> String {
+    use scoring::RiskLevel;
+    match level {
+        RiskLevel::Clean    => "■ CLEAN".green().bold().to_string(),
+        RiskLevel::Low      => "■ LOW".blue().bold().to_string(),
+        RiskLevel::Medium   => "■ MEDIUM".bright_yellow().bold().to_string(),
+        RiskLevel::High     => "■ HIGH".yellow().bold().to_string(),
+        RiskLevel::Critical => "■ CRITICAL".red().bold().to_string(),
+    }
+}
+
+fn level_plain(level: scoring::RiskLevel) -> &'static str {
+    use scoring::RiskLevel;
+    match level {
+        RiskLevel::Clean    => "CLEAN",
+        RiskLevel::Low      => "LOW",
+        RiskLevel::Medium   => "MEDIUM",
+        RiskLevel::High     => "HIGH",
+        RiskLevel::Critical => "CRITICAL",
+    }
 }

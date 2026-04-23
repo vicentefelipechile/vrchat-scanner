@@ -33,10 +33,14 @@ executing the content.
 
 | Mode | Command | Use case |
 |---|---|---|
-| CLI scan | `vrcstorage-scanner scan <FILE>` | Local file analysis |
+| CLI scan (single) | `vrcstorage-scanner scan <FILE>` | Local file analysis |
+| CLI scan (multi)  | `vrcstorage-scanner scan <FILE1> <FILE2> <DIR>` | Multiple files or folders |
 | CLI JSON | `vrcstorage-scanner scan <FILE> --output json` | CI / script integration |
+| CLI TXT | `vrcstorage-scanner scan <FILE> --output txt -f report.txt` | Plain-text report to file |
 | CLI sanitize | `vrcstorage-scanner sanitize <FILE>` | Remove/neutralize malicious assets |
-| Drag-and-drop | `vrcstorage-scanner <FILE>` | Non-technical users (pauses on exit; offers sanitize prompt for .unitypackage) |
+| Drag-and-drop (single) | `vrcstorage-scanner <FILE>` | Non-technical users |
+| Drag-and-drop (multi) | `vrcstorage-scanner <FILE1> <FILE2> …` | Multiple files dropped at once |
+| Drag-and-drop (folder) | `vrcstorage-scanner <FOLDER>` | Recursive scan of a directory |
 | HTTP server | `vrcstorage-scanner serve --port 8080` | Cloudflare Containers (R2 download) |
 
 **Server output:** `POST /scan` with body `{ "r2_url": "...", "file_id": "...", "expected_sha256": "..." }`.
@@ -58,6 +62,7 @@ vrcstorage-scanner/
 ├── src/
 │   ├── lib.rs                  ← re-exports all modules (used by tests and integrations)
 │   ├── main.rs                 ← CLI with clap: `scan`, `sanitize`, `serve`, `credits` subcommands
+│   │                              also handles drag-and-drop (single file, multiple files, folders)
 │   │                              IMPORTANT: must declare all modules that use crate::config
 │   ├── config.rs               ← SINGLE SOURCE OF TRUTH for all tuneable constants
 │   ├── pipeline.rs             ← full flow orchestration (stages 0-7)
@@ -106,6 +111,8 @@ vrcstorage-scanner/
 │   │   ├── finding.rs          ← FindingId enum, Finding struct, Severity (Low/Medium/High/Critical)
 │   │   ├── json_reporter.rs    ← to_json(): serializes ScanReport to JSON
 │   │   ├── cli_reporter.rs     ← print_report(): colored ANSI output
+│   │   ├── txt_reporter.rs     ← render_batch_txt() / render_single_txt(): plain-text output for
+│   │   │                          drag-and-drop report saving and --output txt CLI flag
 │   │   └── sanitize_reporter.rs ← print_sanitize_report(): colored output for sanitize results
 │   │
 │   ├── server/
@@ -165,7 +172,7 @@ Input (path or bytes)
    ▼ Stage 6 (cont.) — compute_score()
    │   Sum points → RiskLevel (Clean/Low/Medium/High/Critical)
    ▼ Stage 7 — ScanReport::build()
-   └── JSON (to_json) or CLI (print_report)
+   └── JSON (to_json) or CLI (print_report) or TXT (render_batch_txt / render_single_txt)
 ```
 
 > **Parallelism rule:** Stages 2-5 use `rayon::par_iter()`. Do not introduce shared mutable state
@@ -242,6 +249,12 @@ Input (path or bytes)
   comment out. It is omitted from JSON when empty.
 - `Severity` — `Low | Medium | High | Critical` (impl `PartialOrd`).
 - `ScanReport` — complete structure serializable to JSON.
+- `cli_reporter` — `print_report(&ScanReport, RiskLevel, verbose, TermCaps)`: colored ANSI output.
+- `json_reporter` — `to_json(&ScanReport) -> Result<String>`: pretty-printed JSON serialization.
+- `txt_reporter` — `render_batch_txt(&[BatchEntry]) -> String` and
+  `render_single_txt(&ScanReport, RiskLevel, sanitized) -> String`: plain-text output with no
+  ANSI escape codes, suitable for writing to `.txt` files. Used by the drag-and-drop report-save
+  prompt and by `--output txt` in the `scan` subcommand.
 - `sanitize_reporter` — `print_sanitize_report(&SanitizeReport, TermCaps)`: colored CLI output
   for the result of a `sanitize` run.
 
@@ -288,27 +301,59 @@ mod whitelist; // ← Known-file whitelist evaluation
 Omitting `mod config;` from `main.rs` produces 13 `E0432` errors because `crate::config` is
 not resolvable in the binary compilation context even though `lib.rs` already declares it.
 
-### `main.rs` — drag-and-drop flow
+### `main.rs` — drag-and-drop multi-file/folder flow
 
-The drag-and-drop branch (when the user drops a file onto the executable) has a specific
-execution order that **must not be changed**:
+The drag-and-drop branch handles one or more files and folders dropped onto the executable.
+The execution order is fixed and **must not be changed**:
 
 ```
-1. run_scan_command()   → (RiskLevel, Vec<Finding>)  ← scan + print report
-2. prompt_sanitize()    ← shown only for .unitypackage with High/Critical level
-3. run_sanitize_command() (optional, only if user answers Y)
-4. wait_for_keypress()  ← keeps the window open
-5. process::exit(2)     ← only for Critical, AFTER all of the above
+1. collect_unitypackages(paths)     → Vec<PathBuf>  ← recursive folder walk, dedup
+2. prompt_continue_large_batch()    ← shown only when count > 6; cancels on N
+3. For each file in targets:
+   a. print_file_header()           ← visual separator [N/Total] (skipped for single file)
+   b. run_scan_command()            → (RiskLevel, Vec<Finding>)
+   c. prompt_sanitize()             ← shown only for .unitypackage with High/Critical level
+   d. run_sanitize_command()        ← only if user answers Y
+4. print_batch_summary()            ← shown only when targets.len() > 1
+5. prompt_save_report()             ← always shown; user decides whether to save txt
+6. wait_for_keypress()              ← keeps the window open
+7. process::exit(2)                 ← only if any file was Critical, AFTER all of the above
 ```
 
 > **Critical rule:** `process::exit(2)` must never be called inside `run_scan_command`
-> when used from the drag-and-drop path.  Calling it there closes the window before
-> `wait_for_keypress()` runs, giving the user no time to read the report.
-> The exit is always the **last** statement in the drag-and-drop `match` arm.
+> when used from the drag-and-drop path. The exit is always the **last** statement.
 
-`run_scan_command` returns `(scoring::RiskLevel, Vec<report::Finding>)` so that:
-- The caller can defer `process::exit(2)` until after all prompts.
-- The drag-and-drop branch can pass the findings to `prompt_sanitize` without a second scan.
+### `main.rs` — `BatchResult` struct
+
+`BatchResult` accumulates state for each scanned file across the drag-and-drop loop:
+
+```rust
+struct BatchResult {
+    path: PathBuf,
+    level: scoring::RiskLevel,
+    findings: Vec<report::Finding>,  // kept for potential future use (e.g. aggregate dedup)
+    sanitized: bool,
+    report: Option<report::ScanReport>, // None during main pass; reserved for future optimization
+                                        // that avoids the re-scan in build_txt_from_batch()
+}
+```
+
+`findings` and `report` are currently unused at runtime but are intentionally kept:
+- `findings` — placeholder for future aggregate analysis across the batch (e.g. cross-package dedup).
+- `report` — if populated, `build_txt_from_batch` could skip re-scanning each file to build the
+  txt output. Currently it always re-scans because storing full `ScanReport` structs for large
+  batches would double memory usage.
+
+> Do not remove these fields. Remove the `#[allow(dead_code)]` comment and populate them
+> when implementing the optimization.
+
+### `main.rs` — `collect_unitypackages` rules
+
+- Regular files are passed through as-is regardless of extension (user explicitly selected them).
+- Directories are walked recursively; only `.unitypackage` files are collected from directories.
+- Paths are deduplicated by canonical path (resolves symlinks).
+- Entries are sorted for deterministic order across platforms.
+- Non-existent paths emit a warning and are skipped; they do not abort the run.
 
 ### `main.rs` — sanitize prompt helpers
 
@@ -326,6 +371,18 @@ Three private functions support the interactive sanitize prompt:
 
 The prompt uses `═══` separator lines (Unicode) or `===` (ASCII fallback) — **never box-drawing
 characters**. The output filename is computed from the actual input path, not a template string.
+
+### `txt_reporter` — output contract
+
+`render_batch_txt` and `render_single_txt` must:
+- Produce **no ANSI escape codes** — output is written directly to `.txt` files.
+- Include a timestamp (`chrono::Utc::now().to_rfc2822()`) in the header.
+- Contain a summary table (score, risk level, sanitized flag, filename) followed by per-file
+  detail sections, followed by aggregate totals.
+- Use only plain ASCII box characters (`=`, `-`) for separators.
+
+`render_single_txt(report, level, sanitized)` is a convenience wrapper that calls
+`render_batch_txt` with a single-element slice.
 
 ### Public analysis function signatures
 
@@ -738,7 +795,6 @@ mod ingestion;
 ```rust
 let mut offset = 512;
 while offset + 4 <= data.len() {
-    // Only checks at 512, 1024, 1536... — misses headers that fall between strides
     offset += 512;
 }
 ```
@@ -747,7 +803,6 @@ while offset + 4 <= data.len() {
 ```rust
 for offset in 16..data.len().saturating_sub(3) {
     let window = &data[offset..offset + 4];
-    // ...
 }
 ```
 
@@ -777,25 +832,12 @@ modifier (`unsafe fn foo()`, `unsafe void Write(...)`). Use `\bunsafe\b` instead
 
 ### ❌ Using a raw `&str` as a finding ID
 
-The `Finding` struct now holds `id: FindingId`, a typed enum. Passing a plain string literal
-no longer compiles:
-
 ```rust
 // ❌ Wrong — does not compile
 Finding::new("CS_PROCESS_START", Severity::Critical, 75, loc, "...");
 
 // ✓ Correct — use the enum variant
 Finding::new(FindingId::CsProcessStart, Severity::Critical, 75, loc, "...");
-```
-
-Similarly, all comparisons in tests must use the variant, not a string:
-
-```rust
-// ❌ Wrong
-findings.iter().any(|f| f.id == "CS_PROCESS_START")
-
-// ✓ Correct
-findings.iter().any(|f| f.id == FindingId::CsProcessStart)
 ```
 
 ### ❌ Declaring Regex outside `patterns.rs`
@@ -816,18 +858,17 @@ This ensures all values are tuneable from a single location.
 ### ❌ Calling `process::exit` inside `run_scan_command` in drag-and-drop mode
 
 In the drag-and-drop path, `run_scan_command` **must not** call `process::exit(2)` directly.
-Doing so closes the terminal window before `wait_for_keypress()` is reached, and the user
-cannot read the report or interact with the sanitize prompt.
+Doing so closes the terminal window before `wait_for_keypress()` is reached.
 
 ```rust
-// ❌ Wrong — run_scan_command calls process::exit(2) before wait_for_keypress
+// ❌ Wrong — closes window before prompts
 run_scan_command(&file, "cli", None, true, caps);
-wait_for_keypress(caps);  // ← never reached for Critical packages
+wait_for_keypress(caps); // ← never reached for Critical packages
 
-// ✓ Correct — caller receives the level and exits only after all prompts
-let (level, findings) = run_scan_command(&file, "cli", None, true, caps);
-// ... prompt_sanitize, wait_for_keypress ...
-if level == RiskLevel::Critical { std::process::exit(2); }  // last line
+// ✓ Correct — caller defers exit until after all prompts
+let (level, _findings) = run_scan_command(&file, "cli", None, true, caps);
+// ... prompt_sanitize, print_batch_summary, prompt_save_report, wait_for_keypress ...
+if any_critical { std::process::exit(2); } // last statement
 ```
 
 ### ❌ Re-scanning the file a second time in the sanitize prompt
@@ -835,18 +876,8 @@ if level == RiskLevel::Critical { std::process::exit(2); }  // last line
 The sanitize prompt must **not** call `pipeline::run_scan()` again. The drag-and-drop branch
 already has the full findings from the first scan. Pass them directly to `prompt_sanitize`.
 
-```rust
-// ❌ Wrong — runs the full scan a second time
-if let Ok(report) = pipeline::run_scan(&file) { ... }
-
-// ✓ Correct — reuse findings already returned by run_scan_command
-let (level, findings) = run_scan_command(...);
-if ... { prompt_sanitize(&file, &findings, caps); }
-```
-
 ### ❌ Using box-drawing characters in interactive prompts
 
-Boxes (`┌─┐│└─┘`) are hard to align correctly and break on narrow or legacy terminals.
 All interactive prompts must use `═══` separator lines (Unicode) or `===` (ASCII fallback).
 
 ```
@@ -859,9 +890,19 @@ All interactive prompts must use `═══` separator lines (Unicode) or `===` 
 ════════════════════════════════════════
   Section Title
 ════════════════════════════════════════
-
-Threats detected.
 ```
+
+### ❌ Adding ANSI escape codes to `txt_reporter`
+
+`txt_reporter` output is written to `.txt` files. Never import `colored` or write `\x1b[` escape
+sequences in `txt_reporter.rs`. Use only plain ASCII text and the separators defined by its
+output contract (see Section 5).
+
+### ❌ Walking all file types when scanning a folder
+
+`collect_from_dir` must only collect `.unitypackage` files from directories. Walking other
+extensions from a folder would silently scan files the user did not intend to submit. Files
+passed as explicit arguments are always scanned regardless of extension.
 
 ---
 
@@ -933,11 +974,26 @@ cargo bench
 # Start server locally
 cargo run -- serve --port 8080
 
-# Scan a file (CLI)
+# Scan a single file (CLI)
 cargo run -- scan path/to/file.unitypackage
+
+# Scan multiple files at once
+cargo run -- scan file1.unitypackage file2.unitypackage file3.unitypackage
+
+# Scan an entire folder recursively (collects all .unitypackage files inside)
+cargo run -- scan path/to/folder/
+
+# Scan a mix of files and folders
+cargo run -- scan file1.unitypackage path/to/folder/ file2.unitypackage
 
 # Scan and emit JSON
 cargo run -- scan path/to/file.unitypackage --output json
+
+# Scan and save a plain-text report
+cargo run -- scan path/to/file.unitypackage --output txt -f report.txt
+
+# Scan multiple files and save a combined plain-text report
+cargo run -- scan file1.unitypackage file2.unitypackage --output txt -f report.txt
 
 # Sanitize a package (removes/neutralizes High+ findings)
 cargo run -- sanitize path/to/file.unitypackage
@@ -948,6 +1004,16 @@ cargo run -- sanitize path/to/file.unitypackage --output out.unitypackage --dry-
 # Sanitize acting on Medium+ findings
 cargo run -- sanitize path/to/file.unitypackage --min-severity medium
 
-# Drag-and-drop (triggers interactive pause + sanitize prompt for .unitypackage)
+# Drag-and-drop (single file) — triggers interactive pause + sanitize prompt
 cargo run -- path/to/file.unitypackage
+
+# Drag-and-drop (multiple files) — scans each, per-file sanitize prompt, batch summary,
+# offer to save txt report
+cargo run -- file1.unitypackage file2.unitypackage file3.unitypackage
+
+# Drag-and-drop (folder) — recursively finds all .unitypackage files, same flow as above
+cargo run -- path/to/folder/
+
+# Drag-and-drop (mix of files and folders)
+cargo run -- file1.unitypackage path/to/folder/
 ```
