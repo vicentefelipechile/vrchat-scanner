@@ -87,7 +87,7 @@ vrcstorage-scanner/
 │   │   │   ├── pattern_matcher.rs  ← regex over C# code (dangerous APIs)
 │   │   │   ├── url_extractor.rs    ← embedded URLs + safe domain whitelist
 │   │   │   ├── obfuscation.rs      ← base64 ratio, short identifiers, XOR, unicode escapes
-│   │   │   └── preprocessor.rs     ← blanks comments and inactive #if blocks before analysis
+│   │   │   └── preprocessor.rs     ← line-by-line: blanks comments and inactive #if blocks before analysis
 │   │   ├── assets/
 │   │   │   ├── mod.rs          ← analyze_asset(): dispatches by AssetType
 │   │   │   ├── texture_scanner.rs  ← magic bytes, entropy (skips PNG/JPEG/WebP/EXR/HDR/DDS), byte-by-byte polyglot scan with PE validation
@@ -111,9 +111,9 @@ vrcstorage-scanner/
 │   │   ├── mod.rs
 │   │   ├── finding.rs          ← FindingId enum, Finding struct, Severity (Low/Medium/High/Critical)
 │   │   ├── json_reporter.rs    ← to_json(): serializes ScanReport to JSON
-│   │   ├── cli_reporter.rs     ← print_report(): colored ANSI output
-│   │   ├── txt_reporter.rs     ← render_batch_txt() / render_single_txt(): plain-text output for
-│   │   │                          drag-and-drop report saving and --output txt CLI flag
+│   │   ├── cli_reporter.rs     ← print_report(): colored ANSI output; shows line_numbers per finding
+│   │   ├── txt_reporter.rs     ← render_batch_txt() / render_single_txt(): plain-text output;
+│   │   │                          includes scan duration per file in the Score line
 │   │   └── sanitize_reporter.rs ← print_sanitize_report(): colored output for sanitize results
 │   │
 │   ├── server/
@@ -161,7 +161,7 @@ Input (path or bytes)
    │   ├── Structural checks: PATH_TRAVERSAL, FORBIDDEN_EXTENSION, DOUBLE_EXTENSION, DLL_OUTSIDE_PLUGINS
    │   ├── AssetType::Dll     → analysis::dll::analyze_dll()
    │   ├── AssetType::Script  → analysis::scripts::analyze_script()
-   │   │     └── preprocessor::preprocess() → blanks comments + inactive #if blocks
+   │   │     └── preprocessor::preprocess() → line-by-line: blanks comments + inactive #if blocks
    │   │         then pattern_matcher / url_extractor / obfuscation run on active_source
    │   ├── AssetType::Texture → analysis::assets::analyze_asset()
    │   ├── AssetType::Audio   → analysis::assets::analyze_asset()
@@ -222,33 +222,54 @@ Input (path or bytes)
 
 ### `preprocessor` (within `analysis::scripts`)
 
-- `preprocess(source, extra_inactive) -> PreprocessedSource` — single-pass O(n) preprocessor
-  that blanks comments and inactive `#if` blocks before any pattern-based analysis runs.
-- **`active_source`** — the output field. Same byte length as input; newlines preserved so
-  1-indexed line numbers remain valid. All blanked regions are replaced with spaces.
+- `preprocess(source, extra_inactive) -> PreprocessedSource` — **line-by-line** preprocessor
+  (not byte-by-byte) that blanks comments and inactive `#if` blocks before any pattern-based
+  analysis runs.
+- **Architecture:** iterates with `split_inclusive('\n')`, giving one complete line per iteration.
+  For each line:
+  1. Strip UTF-8 BOM (`U+FEFF`) from the first line before checking for `#` directives.
+  2. If the line starts with `#` → it is a preprocessor directive. Blank the entire line and
+     update `if_stack`. Reset `in_block_comment` (directives cannot legally appear inside
+     block comments in C#).
+  3. If `!all_active(&if_stack)` → blank the entire line. Reset `in_block_comment` (block
+     comments cannot legitimately span inactive block boundaries).
+  4. Otherwise → call `blank_comments_in_line()` which handles `//`, `/* */`, and string
+     literal skipping for that line. The `in_block_comment` flag is carried across lines.
+- **`active_source`** — the output field. Same byte length as input; `\n` and `\r` are never
+  blanked so line numbers remain valid. All blanked regions become spaces.
+- **BOM handling:** `trim_start_matches('\u{FEFF}')` is applied to `line_raw` before any
+  directive check. Without this, a file that starts with a BOM immediately followed by
+  `#if UNITY_EDITOR` (common in files saved by some Windows editors) would not recognize
+  the directive, causing the entire file to be analyzed as active code.
+- **Nested `#if` inside inactive blocks:** when a line is inactive (step 3), it is blanked
+  and the loop continues — the directive parser (step 2) is never reached for those lines.
+  This means `#if` / `#endif` inside an inactive block do **not** update `if_stack`. This is
+  correct C# semantics: a disabled `#if` cannot push a frame that a later `#endif` would pop,
+  which would corrupt the stack and re-activate code after the outer `#endif`.
+- **`if_stack` invariant:** starts as `vec![true]` (top-level always active). Each `#if`
+  pushes a frame; `#endif` pops one. The root frame is never popped (`if_stack.len() > 1`
+  guard on every pop). Minimum depth is always 1.
 - **What is blanked:**
-  - `//` line comments
-  - `/* … */` block comments (including unterminated ones — blanked to EOF)
-  - `#if <inactive>` … `#endif` blocks and the directive lines themselves
-  - `#elif`, `#else`, `#endif` directive lines (the control lines, not their bodies unless inactive)
-- **What is NOT blanked (preserved for analysis):**
-  - String literals `"…"` and char literals `'…'` — content is skipped, not erased
-  - Verbatim strings `@"…"` — content is skipped, not erased
-  - Interpolated verbatim strings `$@"…"` and `@$"…"`
-  - Active code blocks
-- **Inactive define rules:**
+  - `//` line comments (from `//` to end of line content, not including `\n`)
+  - `/* … */` block comments, including multi-line ones via `in_block_comment` flag
+  - `#if <inactive>` … `#endif` block bodies and all directive lines themselves
+- **What is NOT blanked (skipped without modification):**
+  - Contents of `"…"` and `'…'` string/char literals
+  - Contents of `@"…"` verbatim strings (`""` is the escape, not `\`)
+  - Contents of `$@"…"` and `@$"…"` interpolated verbatim strings
+- **String literal dispatch order (critical — enforced in `blank_comments_in_line`):**
+  1. `$@"` / `@$"` → `skip_verbatim_string`
+  2. `@"` → `skip_verbatim_string` — checked BEFORE plain `"`
+  3. `"` → `skip_string_literal`
+  4. `'` → `skip_string_literal`
+- **Inactive define rules (unchanged from original):**
   - `#if UNITY_EDITOR` → blanked (inactive define)
-  - `#if !UNITY_EDITOR` → kept (negation of inactive = potentially active in player builds)
+  - `#if !UNITY_EDITOR` → kept (negation = potentially active in player builds)
   - `#if UNITY_EDITOR && X` → blanked if ANY non-negated term is an inactive define
   - `#if UNITY_EDITOR || X` → kept (OR with unknown = conservatively assume active)
-- **`if_stack` invariant:** starts as `vec![true]` (top-level is always active). Each `#if`
-  pushes a frame; `#endif` pops one. Never pop the last frame — minimum depth is 1.
-- **String literal invariant:** `skip_string_literal` and `skip_verbatim_string` always return
-  an index `<= bytes.len()`. They never advance past EOF even on malformed input.
-- **Verbatim string escape rule:** inside `@"…"`, the sequence `""` is an escaped quote.
-  Backslash (`\`) has no special meaning. Do NOT use `skip_string_literal` for verbatim strings.
-- **Obfuscation exception:** `obfuscation::analyze` runs on the **original** (non-preprocessed)
-  source. Obfuscated identifiers and base64 blobs inside comments are still worth flagging.
+  - Unknown defines (e.g. `UNITY_2021_2_OR_NEWER`) → treated as active (conservative)
+- **`obfuscation::analyze` exception:** runs on the **original** (non-preprocessed) source.
+  Obfuscated identifiers and base64 blobs inside comments are still worth flagging.
   Only `pattern_matcher` and `url_extractor` operate on `active_source`.
 
 ### `metadata`
@@ -282,13 +303,19 @@ Input (path or bytes)
   `pattern_matcher` for C# findings and consumed by the sanitizer to know which exact lines to
   comment out. It is omitted from JSON when empty.
 - `Severity` — `Low | Medium | High | Critical` (impl `PartialOrd`).
-- `ScanReport` — complete structure serializable to JSON.
+- `ScanReport` — complete structure serializable to JSON. Includes `scan_duration_ms: u128`
+  which is serialized automatically by serde — no extra work needed in `json_reporter`.
 - `cli_reporter` — `print_report(&ScanReport, RiskLevel, verbose, TermCaps)`: colored ANSI output.
+  - Each finding prints `line_numbers` when present, formatted as `Lines: 47, 89, 134`. When
+    more than 10 lines exist, shows the first 10 and `… (+N more)` to avoid flooding output.
+  - `Duration` is shown inside the score summary box (before the closing separator), formatted
+    via `format_duration()`: values under 1 s show as `142ms`, 1 s or more as `1.24s`.
 - `json_reporter` — `to_json(&ScanReport) -> Result<String>`: pretty-printed JSON serialization.
+  `scan_duration_ms` is included automatically as part of the struct.
 - `txt_reporter` — `render_batch_txt(&[BatchEntry]) -> String` and
   `render_single_txt(&ScanReport, RiskLevel, sanitized) -> String`: plain-text output with no
-  ANSI escape codes, suitable for writing to `.txt` files. Used by the drag-and-drop report-save
-  prompt and by `--output txt` in the `scan` subcommand.
+  ANSI escape codes, suitable for writing to `.txt` files. The Score line per file includes the
+  scan duration: `Score: 42 | Risk: HIGH | Duration: 1.24s | Action: ManualReviewRequired`.
 - `sanitize_reporter` — `print_sanitize_report(&SanitizeReport, TermCaps)`: colored CLI output
   for the result of a `sanitize` run.
 
@@ -342,20 +369,64 @@ The execution order is fixed and **must not be changed**:
 
 ```
 1. collect_unitypackages(paths)     → Vec<PathBuf>  ← recursive folder walk, dedup
-2. prompt_continue_large_batch()    ← shown only when count > 6; cancels on N
-3. For each file in targets:
+2. prompt_continue_large_batch()    ← shown only when count > 6; default Y (Enter = confirm)
+3. let batch_start = Instant::now() ← timer starts here, before the scan loop
+4. For each file in targets:
    a. print_file_header()           ← visual separator [N/Total] (skipped for single file)
    b. run_scan_command()            → (RiskLevel, Vec<Finding>)
-   c. prompt_sanitize()             ← shown only for .unitypackage with High/Critical level
-   d. run_sanitize_command()        ← only if user answers Y
-4. print_batch_summary()            ← shown only when targets.len() > 1
-5. prompt_save_report()             ← always shown; user decides whether to save txt
-6. wait_for_keypress()              ← keeps the window open
-7. process::exit(2)                 ← only if any file was Critical, AFTER all of the above
+   c. prompt_sanitize()             ← shown only for .unitypackage with High/Critical level; default Y
+   d. run_sanitize_command()        ← only if user answers Y (or Enter)
+5. print_batch_summary(&batch, batch_start.elapsed().as_millis(), caps)
+                                    ← shown only when targets.len() > 1; includes total elapsed time
+6. prompt_save_report()             ← always shown; default Y (Enter = save)
+7. wait_for_keypress()              ← keeps the window open
+8. process::exit(2)                 ← only if any file was Critical, AFTER all of the above
 ```
 
 > **Critical rule:** `process::exit(2)` must never be called inside `run_scan_command`
 > when used from the drag-and-drop path. The exit is always the **last** statement.
+
+### `main.rs` — interactive prompt defaults
+
+**All three interactive prompts default to Y (confirm).** Enter without typing anything confirms.
+The user must explicitly type `N` to cancel.
+
+| Prompt | Default | Rationale |
+|---|---|---|
+| `prompt_continue_large_batch` | Y | Most users who drop a folder want to scan everything |
+| `prompt_sanitize` | Y | When threats are detected, sanitizing is the safe action |
+| `prompt_save_report` | Y | Users generally want a record of the scan |
+
+Implementation pattern for every prompt:
+```rust
+let answer = input.trim().to_lowercase();
+answer.is_empty() || answer == "y"   // ← empty string = Y (Enter key)
+```
+
+### `main.rs` — `canonicalize_clean()` helper
+
+**Always use `canonicalize_clean()` instead of `Path::canonicalize()` directly.**
+
+On Windows, `std::fs::canonicalize()` returns UNC extended-length paths prefixed with `\\?\`
+(e.g. `\\?\C:\Users\…`). These are valid for Win32 API calls but unreadable in CLI output and
+reports. `canonicalize_clean()` strips the prefix on Windows and is a transparent passthrough
+on other platforms:
+
+```rust
+fn canonicalize_clean(path: &std::path::Path) -> std::path::PathBuf {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    #[cfg(target_os = "windows")]
+    {
+        let s = canonical.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            return std::path::PathBuf::from(stripped);
+        }
+    }
+    canonical
+}
+```
+
+Used in: `collect_unitypackages()` and `collect_from_dir()`.
 
 ### `main.rs` — `BatchResult` struct
 
@@ -381,11 +452,21 @@ struct BatchResult {
 > Do not remove these fields. Remove the `#[allow(dead_code)]` comment and populate them
 > when implementing the optimization.
 
+### `main.rs` — `print_batch_summary()` signature
+
+```rust
+fn print_batch_summary(batch: &[BatchResult], total_ms: u128, caps: TermCaps)
+```
+
+`total_ms` is `batch_start.elapsed().as_millis()` measured from before the scan loop.
+The summary displays it formatted via the same `format_duration()` logic used in
+`cli_reporter` (under 1 s → `142ms`, 1 s or more → `1.24s`).
+
 ### `main.rs` — `collect_unitypackages` rules
 
 - Regular files are passed through as-is regardless of extension (user explicitly selected them).
 - Directories are walked recursively; only `.unitypackage` files are collected from directories.
-- Paths are deduplicated by canonical path (resolves symlinks).
+- Paths are deduplicated by canonical path via `canonicalize_clean()` (resolves symlinks, strips `\\?\`).
 - Entries are sorted for deterministic order across platforms.
 - Non-existent paths emit a warning and are skipped; they do not abort the run.
 
@@ -397,7 +478,7 @@ Three private functions support the interactive sanitize prompt:
 |---|---|---|
 | `finding_api_label` | `(FindingId) -> &'static str` | Maps a FindingId to a short API name (e.g. `"Process.Start()"`) |
 | `build_action_list` | `(&[Finding]) -> Vec<String>` | Builds a sorted per-asset action list from High/Critical findings |
-| `prompt_sanitize` | `(&Path, &[Finding], TermCaps) -> bool` | Renders the prompt with `═══` separators; returns true if user answers `Y` |
+| `prompt_sanitize` | `(&Path, &[Finding], TermCaps) -> bool` | Renders the prompt; Enter or `Y` = confirm, `N` = cancel |
 
 `build_action_list` groups findings by `location`:
 - `.cs` files → `"comment out <api1>, <api2>"`
@@ -406,53 +487,34 @@ Three private functions support the interactive sanitize prompt:
 The prompt uses `═══` separator lines (Unicode) or `===` (ASCII fallback) — **never box-drawing
 characters**. The output filename is computed from the actual input path, not a template string.
 
-### `preprocessor` — rules and invariants
+### `report/cli_reporter.rs` — finding output format
 
-All analysis of C# scripts goes through `preprocessor::preprocess()` before reaching
-`pattern_matcher` and `url_extractor`. The following invariants must always hold:
+Each finding prints in this order:
+1. Severity label + detail (bold)
+2. `File:` — asset path
+3. `ID:` — FindingId
+4. `Context:` — optional extra info
+5. `Lines:` — 1-indexed line numbers where the pattern was found, **only when `line_numbers` is non-empty**.
+   Shows up to 10 entries; if more exist appends `… (+N more)`.
+6. Verbose explanation (only when `verbose = true`)
 
-**Must blank:**
-- `//` line comments
-- `/* … */` block comments (blank from `/*` to `*/` inclusive; unterminated = blank to EOF)
-- `#if <inactive>` … `#endif` block bodies
-- All `#if` / `#elif` / `#else` / `#endif` directive lines themselves
-
-**Must NOT blank (skip over without erasing):**
-- Contents of `"…"` string literals
-- Contents of `'…'` char literals
-- Contents of `@"…"` verbatim strings — escape is `""`, not `\"`
-- Contents of `$@"…"` and `@$"…"` interpolated verbatim strings
-
-**String literal dispatch order (critical — must match this order in code):**
-1. `@"` → `skip_verbatim_string` — checked BEFORE plain `"`
-2. `$@"` / `@$"` → `skip_verbatim_string`
-3. `"` → `skip_string_literal`
-4. `'` → `skip_string_literal`
-
-> **Never** use `skip_string_literal` for verbatim strings. Verbatim strings use `""` as
-> the escape sequence, not `\`. Mis-routing causes the scanner to consume code after the
-> string as if it were part of the literal, silently dropping real findings.
-
-**`skip_string_literal` safety rule:**
-```rust
-// CORRECT — bounds-check before advancing past the escape character
-b'\\' => { i += if i + 1 < bytes.len() { 2 } else { 1 }; }
-
-// WRONG — can advance i past bytes.len() on EOF, corrupting loop state
-b'\\' => { i += 2; }
+```
+[HIGH     +40]  File write/delete operations detected in C# script
+  File:       Assets/Scripts/Evil.cs
+  ID:         CS_FILE_WRITE
+  Lines:      47, 89, 134
 ```
 
-**`if_stack` management:**
-- Minimum stack depth is always 1 (the implicit top-level active frame).
-- `#endif` with `if_stack.len() == 1` is a no-op (malformed input guard).
-- Pop THEN evaluate when processing `#elif` (pop old branch frame, push new one).
+### `report/cli_reporter.rs` — duration format
 
-**`obfuscation::analyze` exception:**
-Obfuscation checks run on the **raw original source**, not on `active_source`. This is
-intentional: base64 blobs and short identifiers inside comments or inactive blocks are
-still worth flagging at low severity since they may indicate the file was tampered with.
+`format_duration(ms: u128) -> String`:
+- `< 1000ms` → `"142ms"`
+- `≥ 1000ms` → `"1.24s"`
 
-### `txt_reporter` — output contract
+Duration is shown **inside** the score summary box, after `Action:` and before the closing
+separator line. It is **not** printed as a separate line after the box.
+
+### `report/txt_reporter.rs` — output contract
 
 `render_batch_txt` and `render_single_txt` must:
 - Produce **no ANSI escape codes** — output is written directly to `.txt` files.
@@ -460,6 +522,8 @@ still worth flagging at low severity since they may indicate the file was tamper
 - Contain a summary table (score, risk level, sanitized flag, filename) followed by per-file
   detail sections, followed by aggregate totals.
 - Use only plain ASCII box characters (`=`, `-`) for separators.
+- Include scan duration in the per-file Score line:
+  `Score: 42 | Risk: HIGH | Duration: 1.24s | Action: ManualReviewRequired`
 
 `render_single_txt(report, level, sanitized)` is a convenience wrapper that calls
 `render_batch_txt` with a single-element slice.
@@ -670,22 +734,6 @@ magic_ok = declared extension matches actual magic bytes?
                               entropy + polyglot checks still run
 ```
 
-**`is_natively_compressed` flag interaction:**
-- `is_natively_compressed` is `true` only when the magic bytes **confirm** the format (e.g. PNG
-  magic for a `.png` file). A mislabelled file (`magic_ok = false`) always has
-  `is_natively_compressed = false`, so entropy is checked even for compressed formats.
-- This means a `.png` file that is actually a JPEG still goes through the entropy check, which
-  may produce an additional `TextureHighEntropy` finding if the entropy is abnormal.
-
-**`is_any_image` helper — recognised formats:**
-PNG, JPEG, EXR, DDS, HDR (`#?RADIANCE` / `#?RGBE`), BMP, PSD, WebP (`RIFF…WEBP`).
-TGA is **not** included because TGA has no universal magic bytes; it is identified by extension
-only and is always treated as `magic_ok = true` to avoid false positives.
-
-**When to add a new format to `is_any_image`:**
-Add it when the format has a reliable, unique magic byte sequence AND it is commonly used
-in Unity packages. Do not add formats that share magic bytes with executable formats.
-
 ### Reference scoring table
 
 Points come from the `PTS_*` constants in `src/config.rs` — never hardcode them in analysis
@@ -892,15 +940,16 @@ When adding preprocessor tests:
 - Always verify that `active_source.len() == source.len()` — blanking must not change byte length.
 - Test **both sides** of every condition: the blanked case and the kept case.
 - Cover all string literal types: `"…"`, `'…'`, `@"…"`, `$@"…"`.
-- Always include an EOF edge-case test for any new string-skipping logic (backslash at EOF,
-  unterminated string at EOF, unterminated block comment).
+- Always include an EOF edge-case test for any new string-skipping logic.
 - Preprocessor tests must never assert on the exact content of blanked regions (spaces) —
   only assert on what is present or absent by name (e.g. `contains("Process.Start")`).
+- Always add a test for BOM at start of file when touching directive-detection logic.
+- Always add a test for nested `#if` inside an inactive block to verify the stack is not corrupted.
 
 ### Running tests
 
 ```bash
-cargo test                          # all tests (84 integration + 3 unit)
+cargo test                          # all tests
 cargo test --test integration       # integration tests only
 cargo test <test_name>              # specific test
 cargo test 2>&1 | tail -30          # view final summary
@@ -917,27 +966,38 @@ The project has two crate roots: `lib.rs` (library, used by tests) and `main.rs`
 independently. Without it, every `use crate::config::*` in an analysis module will fail with
 `E0432: unresolved import` when compiling the binary.
 
+### ❌ Using `Path::canonicalize()` directly instead of `canonicalize_clean()`
+
+`std::fs::canonicalize()` returns `\\?\C:\...` on Windows (UNC extended-length paths).
+Always use `canonicalize_clean()` defined in `main.rs` so that paths display correctly
+in CLI output and reports on all platforms.
+
 ```rust
-// ❌ Causes 13 E0432 errors during binary compilation
-mod analysis;
-mod ingestion;
-// ... config missing
+// ❌ Wrong — shows \\?\C:\Users\... in output on Windows
+let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
 
 // ✓ Correct
-mod analysis;
-mod config;  // ← required in main.rs even though lib.rs already has it
-mod ingestion;
+let canonical = canonicalize_clean(path);
 ```
+
+### ❌ Interactive prompts that default to N
+
+All three interactive prompts (`prompt_continue_large_batch`, `prompt_sanitize`,
+`prompt_save_report`) default to **Y**. An empty input (Enter key) must confirm, not cancel.
+The implementation pattern is:
+```rust
+let answer = input.trim().to_lowercase();
+answer.is_empty() || answer == "y"
+```
+Never use `matches!(answer.as_str(), "y")` — that would require explicit `Y` input.
+
+### ❌ Missing `batch_start` timer before the scan loop
+
+`batch_start` must be captured with `Instant::now()` **before** the `for (idx, path) in targets`
+loop, not inside it. Capturing inside the loop resets the timer on each file.
+`print_batch_summary` takes `total_ms: u128` as its second argument.
 
 ### ❌ Polyglot scan with a fixed stride
-
-**Wrong:**
-```rust
-let mut offset = 512;
-while offset + 4 <= data.len() {
-    offset += 512;
-}
-```
 
 **Correct (byte-by-byte from byte 16):**
 ```rust
@@ -948,159 +1008,93 @@ for offset in 16..data.len().saturating_sub(3) {
 
 ### ❌ Checking only `MZ` for PE polyglots (false positives)
 
-Checking only the 2-byte `MZ` sequence produces massive false positives on compressed or
-encrypted data. **Always validate the full DOS+PE header structure** using `is_valid_pe_header`:
-
+Always validate the full DOS+PE header structure using `is_valid_pe_header`:
 1. `MZ` at `offset`.
 2. Little-endian u32 at `offset + 0x3C` (`e_lfanew`) ≥ `0x40` and fits in the buffer.
 3. The bytes at `base + e_lfanew` are exactly `PE\0\0`.
 
-Both `texture_scanner.rs` and `audio_scanner.rs` implement this locally as `is_valid_pe_header`.
-
 ### ❌ Entropy check on compressed texture/audio formats
 
 PNG, JPEG, WebP, EXR, HDR, DDS textures and MP3, OGG, AAC, FLAC, Opus audio files are
-natively compressed. Their entropy is naturally near 8.0. **Never run entropy checks on
-these formats** — doing so would flag virtually every legitimate asset.
-
-Use the `is_natively_compressed` / `is_compressed_audio` guard before calling `shannon_entropy`.
+natively compressed. Never run entropy checks on these formats.
 
 ### ❌ Overly restrictive `unsafe` regex
 
-`\bunsafe\s*\{` only detects `unsafe { }` blocks, not the keyword used as a function or method
-modifier (`unsafe fn foo()`, `unsafe void Write(...)`). Use `\bunsafe\b` instead.
+Use `\bunsafe\b` not `\bunsafe\s*\{` — the latter misses `unsafe fn` and `unsafe impl`.
 
 ### ❌ Using a raw `&str` as a finding ID
 
 ```rust
-// ❌ Wrong — does not compile
+// ❌ Wrong
 Finding::new("CS_PROCESS_START", Severity::Critical, 75, loc, "...");
 
-// ✓ Correct — use the enum variant
+// ✓ Correct
 Finding::new(FindingId::CsProcessStart, Severity::Critical, 75, loc, "...");
 ```
 
 ### ❌ Declaring Regex outside `patterns.rs`
 
-All `Regex` must live in `src/utils/patterns.rs` as `lazy_static!`. A `Regex::new()` inline in
-the analysis hot-path recompiles on every call.
+All `Regex` must live in `src/utils/patterns.rs` as `lazy_static!`.
 
 ### ❌ Modifying `finding.severity` in context reductions
 
-`apply_context_reductions` must only modify `finding.points`. The severity of a finding is
-immutable once assigned. Tests in `scoring_pipeline.rs` verify this invariant.
+`apply_context_reductions` must only modify `finding.points`. Severity is immutable once assigned.
 
 ### ❌ Hardcoding point values in analysis modules
 
-Use the `PTS_*` constants from `src/config.rs` rather than literal numbers in `Finding::new()`.
-This ensures all values are tuneable from a single location.
+Use `PTS_*` constants from `src/config.rs`.
 
 ### ❌ Calling `process::exit` inside `run_scan_command` in drag-and-drop mode
 
-In the drag-and-drop path, `run_scan_command` **must not** call `process::exit(2)` directly.
-Doing so closes the terminal window before `wait_for_keypress()` is reached.
-
-```rust
-// ❌ Wrong — closes window before prompts
-run_scan_command(&file, "cli", None, true, caps);
-wait_for_keypress(caps); // ← never reached for Critical packages
-
-// ✓ Correct — caller defers exit until after all prompts
-let (level, _findings) = run_scan_command(&file, "cli", None, true, caps);
-// ... prompt_sanitize, print_batch_summary, prompt_save_report, wait_for_keypress ...
-if any_critical { std::process::exit(2); } // last statement
-```
+`process::exit(2)` must be the **last** statement after all prompts and `wait_for_keypress`.
 
 ### ❌ Re-scanning the file a second time in the sanitize prompt
 
-The sanitize prompt must **not** call `pipeline::run_scan()` again. The drag-and-drop branch
-already has the full findings from the first scan. Pass them directly to `prompt_sanitize`.
+The sanitize prompt must use the findings already available from the first scan pass.
 
 ### ❌ Using box-drawing characters in interactive prompts
 
-All interactive prompts must use `═══` separator lines (Unicode) or `===` (ASCII fallback).
-
-```
-// ❌ Wrong
-┌──────────────────────────────────────┐
-│  Threats detected.                   │
-└──────────────────────────────────────┘
-
-// ✓ Correct
-════════════════════════════════════════
-  Section Title
-════════════════════════════════════════
-```
+Use `═══` separators (Unicode) or `===` (ASCII fallback). Never use `┌┐└┘│─` in prompts.
 
 ### ❌ Adding ANSI escape codes to `txt_reporter`
 
-`txt_reporter` output is written to `.txt` files. Never import `colored` or write `\x1b[` escape
-sequences in `txt_reporter.rs`. Use only plain ASCII text and the separators defined by its
-output contract (see Section 5).
+`txt_reporter` output is written to `.txt` files. Never use `colored` or `\x1b[` sequences there.
 
 ### ❌ Walking all file types when scanning a folder
 
-`collect_from_dir` must only collect `.unitypackage` files from directories. Walking other
-extensions from a folder would silently scan files the user did not intend to submit. Files
-passed as explicit arguments are always scanned regardless of extension.
+`collect_from_dir` must only collect `.unitypackage` files from directories.
 
 ### ❌ Using `skip_string_literal` for verbatim strings (`@"…"`)
 
-Verbatim strings use `""` as the escape sequence, not `\`. Routing `@"…"` through
-`skip_string_literal` causes it to mis-parse the string: it interprets `\"` as an escape
-inside a verbatim string (which it is not), and may consume code following the string as
-if it were part of the literal.
-
-```rust
-// ❌ Wrong — verbatim string mis-parsed, real findings get dropped
-if bytes[i] == b'"' {
-    i = skip_string_literal(bytes, i + 1, b'"');
-    continue;
-}
-
-// ✓ Correct — check for @ prefix BEFORE the plain " handler
-if i + 1 < len && bytes[i] == b'@' && bytes[i + 1] == b'"' {
-    i = skip_verbatim_string(bytes, i + 2);
-    continue;
-}
-if bytes[i] == b'"' {
-    i = skip_string_literal(bytes, i + 1, b'"');
-    continue;
-}
-```
+Verbatim strings use `""` as the escape, not `\`. Always route `@"` through `skip_verbatim_string`.
 
 ### ❌ Advancing `i` past EOF in `skip_string_literal`
 
 ```rust
-// ❌ Wrong — if i == len-1, i becomes len+1 (wraps or goes OOB)
+// ❌ Wrong
 b'\\' => { i += 2; }
 
-// ✓ Correct — bound the advance
+// ✓ Correct
 b'\\' => { i += if i + 1 < bytes.len() { 2 } else { 1 }; }
 ```
 
 ### ❌ Emitting `MagicMismatch` for mislabelled images
 
-When a texture's actual binary format is a recognised image format (just a different one than
-declared), use `MagicMismatchImage` (Low, 2 pts), not `MagicMismatch` (Medium, 25 pts).
-The distinction matters: a `.png` that is actually a JPEG is almost certainly an accidental
-rename, not an attack. Only emit `MagicMismatch` when the file is not any recognised image.
+Use `MagicMismatchImage` (Low, 2 pts) when the file is a valid image in a different format.
+Only use `MagicMismatch` (Medium, 25 pts) when the file is not any recognised image at all.
 
-```rust
-// ❌ Wrong — penalises innocent format mismatches too heavily
-if !magic_ok {
-    findings.push(Finding::new(FindingId::MagicMismatch, ...));
-}
+### ❌ Assuming `#if` inside an inactive block updates `if_stack`
 
-// ✓ Correct — distinguish disguised executables from mislabelled images
-if !magic_ok {
-    if is_any_image(data) {
-        findings.push(Finding::new(FindingId::MagicMismatchImage, Severity::Low, PTS_MAGIC_MISMATCH_IMAGE, ...));
-    } else {
-        findings.push(Finding::new(FindingId::MagicMismatch, Severity::Medium, PTS_MAGIC_MISMATCH, ...));
-    }
-}
-```
+When a line is blanked as inactive (step 3 of the preprocessor loop), the directive parser
+(step 2) is **never reached**. Nested `#if` / `#endif` inside inactive blocks do not push or
+pop frames. This is correct behaviour — do not add special handling for it.
+
+### ❌ Forgetting the BOM strip in the preprocessor
+
+The first line of a C# file may begin with a UTF-8 BOM (`U+FEFF`, encoded as `0xEF 0xBB 0xBF`).
+Without `trim_start_matches('\u{FEFF}')` applied before the `#` check, a file that opens with
+`#if UNITY_EDITOR` on byte 0 will not be recognized as a directive, causing the entire file
+to be treated as active code and generating false positives.
 
 ---
 
@@ -1202,11 +1196,11 @@ cargo run -- sanitize path/to/file.unitypackage --output out.unitypackage --dry-
 # Sanitize acting on Medium+ findings
 cargo run -- sanitize path/to/file.unitypackage --min-severity medium
 
-# Drag-and-drop (single file) — triggers interactive pause + sanitize prompt
+# Drag-and-drop (single file) — triggers interactive pause + sanitize prompt (default Y)
 cargo run -- path/to/file.unitypackage
 
-# Drag-and-drop (multiple files) — scans each, per-file sanitize prompt, batch summary,
-# offer to save txt report
+# Drag-and-drop (multiple files) — scans each, per-file sanitize prompt (default Y),
+# batch summary with total elapsed time, offer to save txt report (default Y)
 cargo run -- file1.unitypackage file2.unitypackage file3.unitypackage
 
 # Drag-and-drop (folder) — recursively finds all .unitypackage files, same flow as above
