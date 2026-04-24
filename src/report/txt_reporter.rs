@@ -58,9 +58,10 @@ pub fn render_batch_txt(entries: &[BatchEntry<'_>]) -> String {
         writeln!(out, "{divider}").unwrap();
         writeln!(out, "  SHA-256 : {}", entry.report.file.sha256).unwrap();
         writeln!(out, "  Size    : {}", format_bytes(entry.report.file.size_bytes)).unwrap();
-        writeln!(out, "  Score   : {}  |  Risk: {}  |  Action: {}",
+        writeln!(out, "  Score   : {}  |  Risk: {}  |  Duration: {}  |  Action: {}",
             entry.report.risk.score,
             level_str(entry.level),
+            format_duration(entry.report.scan_duration_ms),
             entry.report.risk.recommendation,
         ).unwrap();
 
@@ -172,4 +173,8 @@ fn format_bytes(bytes: u64) -> String {
     else if bytes >= MB { format!("{:.1} MB", bytes as f64 / MB as f64) }
     else if bytes >= KB { format!("{:.1} KB", bytes as f64 / KB as f64) }
     else                { format!("{} B", bytes) }
+}
+
+fn format_duration(ms: u128) -> String {
+   if ms < 1_000 { format!("{ms}ms") } else { format!("{:.2}s", ms as f64 / 1_000.0) }
 }

@@ -6,7 +6,7 @@
 ///   - Code inside inactive `#if` blocks (editor-only, SDK-specific, etc.)
 ///     is blanked out.
 ///
-/// "Blanked out" means replaced with whitespace of equal length so that
+/// "Blanked out" means replaced with spaces of equal length so that
 /// 1-indexed line numbers remain valid for the original file.
 pub struct PreprocessedSource {
     /// Source with comments and inactive blocks replaced by spaces.
@@ -15,7 +15,7 @@ pub struct PreprocessedSource {
 }
 
 /// Symbols whose `#if` / `#elif` blocks are considered inactive for security
-/// analysis purposes.  Code inside these guards is unlikely to run in a
+/// analysis purposes. Code inside these guards is unlikely to run in a
 /// standard VRChat/Unity player build.
 const BUILTIN_INACTIVE_DEFINES: &[&str] = &[
     "UNITY_EDITOR",
@@ -34,262 +34,223 @@ const BUILTIN_INACTIVE_DEFINES: &[&str] = &[
 
 /// Preprocess a C# source string.
 pub fn preprocess(source: &str, extra_inactive: &[&str]) -> PreprocessedSource {
-    let combined: Vec<&str> = BUILTIN_INACTIVE_DEFINES
+    let inactive: Vec<&str> = BUILTIN_INACTIVE_DEFINES
         .iter()
         .copied()
         .chain(extra_inactive.iter().copied())
         .collect();
 
-    let active_source = blank_inactive(source, &combined);
-
+    let active_source = process_lines(source, &inactive);
     PreprocessedSource { active_source }
 }
 
-/// Blank out comments and inactive `#if` blocks, preserving byte positions.
-///
-/// # Algorithm
-/// Single-pass, O(n). Each byte is visited at most twice (once by the main
-/// loop, once inside a helper that also advances `i`).  No quadratic patterns.
-fn blank_inactive(source: &str, inactive_defines: &[&str]) -> String {
-    let bytes = source.as_bytes();
-    let len = bytes.len();
-    let mut out: Vec<u8> = bytes.to_vec();
+// ─── Line-by-line processor ───────────────────────────────────────────────────
 
-    // Stack of `is_active` booleans — one entry per nested #if level.
+fn process_lines(source: &str, inactive: &[&str]) -> String {
+    let mut out = source.as_bytes().to_vec();
+
+    // Stack of `is_active` booleans — one entry per nesting level.
     // The implicit top-level frame is always active.
     let mut if_stack: Vec<bool> = vec![true];
 
-    let mut i = 0;
+    // Tracks whether we are inside a `/* … */` block comment spanning lines.
+    let mut in_block_comment = false;
 
-    while i < len {
-        // ── Detect line-level directives (#if / #elif / #else / #endif) ──
-        // Only when we are at the logical start of a line.
-        if is_line_start(&out, i) {
-            // Skip leading whitespace to find '#'
-            let mut j = i;
-            while j < len && (bytes[j] == b' ' || bytes[j] == b'\t') {
-                j += 1;
-            }
+    let mut line_start = 0usize;
 
-            if j < len && bytes[j] == b'#' {
-                let line_end = next_line_end(bytes, j);
-                // Parse from the original bytes so blanking doesn't affect parsing.
-                let directive = std::str::from_utf8(&bytes[j..line_end])
-                    .unwrap_or("")
-                    .trim();
+    for line_raw in source.split_inclusive('\n') {
+        let line_end = line_start + line_raw.len();
 
-                if let Some(rest) = directive.strip_prefix("#if") {
+        // Strip UTF-8 BOM (U+FEFF → 0xEF 0xBB 0xBF) that some editors add to
+        // the very first line. Without this, `#if UNITY_EDITOR` at byte 3 is
+        // not recognized as a directive and the whole file gets analyzed.
+        let line_no_bom = line_raw.trim_start_matches('\u{FEFF}');
+
+        // Strip trailing CR/LF — we never blank those bytes.
+        let line_content = line_no_bom
+            .trim_end_matches('\n')
+            .trim_end_matches('\r');
+
+        // ── Preprocessor directive? ───────────────────────────────────────
+        let trimmed = line_content.trim_start();
+
+        if trimmed.starts_with('#') {
+            // Always blank the directive line itself.
+            blank_line(&mut out, line_start, line_end);
+
+            if let Some(rest) = trimmed.strip_prefix("#if") {
+                let condition = rest.trim();
+                let active = all_active(&if_stack)
+                    && !is_inactive_condition(condition, inactive);
+                if_stack.push(active);
+            } else if let Some(rest) = trimmed.strip_prefix("#elif") {
+                if if_stack.len() > 1 {
+                    if_stack.pop();
                     let condition = rest.trim();
                     let active = all_active(&if_stack)
-                        && !is_inactive_condition(condition, inactive_defines);
+                        && !is_inactive_condition(condition, inactive);
                     if_stack.push(active);
-                    blank_range(&mut out, i, line_end);
-                    i = line_end;
-                    continue;
-                } else if let Some(rest) = directive.strip_prefix("#elif") {
-                    if if_stack.len() > 1 {
-                        if_stack.pop();
-                        let condition = rest.trim();
-                        let active = all_active(&if_stack)
-                            && !is_inactive_condition(condition, inactive_defines);
-                        if_stack.push(active);
-                    }
-                    blank_range(&mut out, i, line_end);
-                    i = line_end;
-                    continue;
-                } else if directive.starts_with("#else") {
-                    if if_stack.len() > 1 {
-                        let top = if_stack.pop().unwrap();
-                        let parent_active = all_active(&if_stack);
-                        if_stack.push(parent_active && !top);
-                    }
-                    blank_range(&mut out, i, line_end);
-                    i = line_end;
-                    continue;
-                } else if directive.starts_with("#endif") {
-                    if if_stack.len() > 1 {
-                        if_stack.pop();
-                    }
-                    blank_range(&mut out, i, line_end);
-                    i = line_end;
-                    continue;
                 }
-                // Other directives (#pragma, #region, …): fall through to normal
-                // processing so their content isn't accidentally flagged.
+            } else if trimmed.starts_with("#else") {
+                if if_stack.len() > 1 {
+                    let top = if_stack.pop().unwrap();
+                    let parent_active = all_active(&if_stack);
+                    if_stack.push(parent_active && !top);
+                }
+            } else if trimmed.starts_with("#endif") {
+                if if_stack.len() > 1 {
+                    if_stack.pop();
+                }
             }
+
+            // Preprocessor directives cannot legally appear inside a block
+            // comment in C#, so reset the flag to avoid spill-over.
+            in_block_comment = false;
+
+            line_start = line_end;
+            continue;
         }
 
-        // ── If inside an inactive block, blank the rest of this line ──────
+        // ── Inside an inactive block — blank the whole line ────────────────
         if !all_active(&if_stack) {
-            let line_end = next_line_end(bytes, i);
-            blank_range(&mut out, i, line_end);
-            i = line_end;
+            blank_line(&mut out, line_start, line_end);
+            // Don't carry block-comment state through inactive blocks.
+            in_block_comment = false;
+            line_start = line_end;
             continue;
         }
 
-        // ── Active code from here on ──────────────────────────────────────
+        // ── Active line — blank inline comments only ───────────────────────
+        blank_comments_in_line(&mut out, line_start, line_content, &mut in_block_comment);
 
-        // Line comment: //
-        if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'/' {
-            let line_end = next_line_end(bytes, i);
-            blank_range(&mut out, i, line_end);
-            i = line_end;
-            continue;
-        }
-
-        // Block comment: /* … */
-        if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-            let end = find_block_comment_end(bytes, i + 2);
-            blank_range(&mut out, i, end);
-            i = end;
-            continue;
-        }
-
-        // Verbatim string: @"…" — no escape sequences, only "" to escape a quote.
-        // FIX: Must be handled BEFORE regular strings so @" isn't mis-parsed.
-        if i + 1 < len && bytes[i] == b'@' && bytes[i + 1] == b'"' {
-            // Skip the @" opener, then find the closing " (doubled "" = escaped quote).
-            let end = skip_verbatim_string(bytes, i + 2);
-            // Do NOT blank verbatim strings — they may contain URLs we need to scan.
-            i = end;
-            continue;
-        }
-
-        // Interpolated verbatim string: $@"…" or @$"…"
-        if i + 2 < len
-            && ((bytes[i] == b'$' && bytes[i + 1] == b'@' && bytes[i + 2] == b'"')
-                || (bytes[i] == b'@' && bytes[i + 1] == b'$' && bytes[i + 2] == b'"'))
-        {
-            let end = skip_verbatim_string(bytes, i + 3);
-            i = end;
-            continue;
-        }
-
-        // Regular string literal: "…"
-        // FIX: guard against `i + 1 >= len` and handle escape at EOF.
-        if bytes[i] == b'"' {
-            let end = skip_string_literal(bytes, i + 1, b'"');
-            i = end;
-            continue;
-        }
-
-        // Char literal: '…'
-        if bytes[i] == b'\'' {
-            let end = skip_string_literal(bytes, i + 1, b'\'');
-            i = end;
-            continue;
-        }
-
-        i += 1;
+        line_start = line_end;
     }
 
     String::from_utf8(out).unwrap_or_else(|_| source.to_string())
 }
 
-// ─── Condition helpers ────────────────────────────────────────────────────────
+// ─── Comment blanking within a single active line ────────────────────────────
+
+fn blank_comments_in_line(
+    out: &mut [u8],
+    line_offset: usize,
+    line: &str,
+    in_block_comment: &mut bool,
+) {
+    let bytes = line.as_bytes();
+    let len = bytes.len();
+    let mut i = 0usize;
+
+    while i < len {
+        let abs = line_offset + i;
+
+        // ── Inside a block comment ─────────────────────────────────────────
+        if *in_block_comment {
+            if i + 1 < len && bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                out[abs] = b' ';
+                out[abs + 1] = b' ';
+                *in_block_comment = false;
+                i += 2;
+            } else {
+                out[abs] = b' ';
+                i += 1;
+            }
+            continue;
+        }
+
+        // ── Line comment `//` — blank to end of line ──────────────────────
+        if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'/' {
+            for j in i..len {
+                out[line_offset + j] = b' ';
+            }
+            return;
+        }
+
+        // ── Block comment open `/*` ────────────────────────────────────────
+        if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            out[abs] = b' ';
+            out[abs + 1] = b' ';
+            *in_block_comment = true;
+            i += 2;
+            continue;
+        }
+
+        // ── Interpolated verbatim string `$@"` or `@$"` ───────────────────
+        if i + 2 < len
+            && ((bytes[i] == b'$' && bytes[i + 1] == b'@' && bytes[i + 2] == b'"')
+                || (bytes[i] == b'@' && bytes[i + 1] == b'$' && bytes[i + 2] == b'"'))
+        {
+            i = skip_verbatim_string(bytes, i + 3);
+            continue;
+        }
+
+        // ── Verbatim string `@"` (must precede plain `"`) ─────────────────
+        if i + 1 < len && bytes[i] == b'@' && bytes[i + 1] == b'"' {
+            i = skip_verbatim_string(bytes, i + 2);
+            continue;
+        }
+
+        // ── Regular string literal `"…"` ──────────────────────────────────
+        if bytes[i] == b'"' {
+            i = skip_string_literal(bytes, i + 1, b'"');
+            continue;
+        }
+
+        // ── Char literal `'…'` ────────────────────────────────────────────
+        if bytes[i] == b'\'' {
+            i = skip_string_literal(bytes, i + 1, b'\'');
+            continue;
+        }
+
+        i += 1;
+    }
+}
+
+// ─── Condition evaluation ─────────────────────────────────────────────────────
 
 #[inline]
 fn all_active(stack: &[bool]) -> bool {
-    // Stack is usually very short (< 5 frames); linear scan is fine.
     stack.iter().all(|&b| b)
 }
 
-/// Returns true when `condition` references one of the inactive defines.
-///
-/// Rules:
-/// - `||` present → assume potentially active, do NOT blank.
-/// - `&&` terms → blank if ANY non-negated term is an inactive define.
 fn is_inactive_condition(condition: &str, inactive: &[&str]) -> bool {
     if condition.contains("||") {
         return false;
     }
-
     condition.split("&&").any(|term| {
         let term = term.trim();
         if term.starts_with('!') {
             return false;
         }
-        // Strip parentheses and other non-identifier chars.
         let term_clean: &str = term.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
-        inactive
-            .iter()
-            .any(|d| d.eq_ignore_ascii_case(term_clean))
+        inactive.iter().any(|d| d.eq_ignore_ascii_case(term_clean))
     })
 }
 
-// ─── Byte-level helpers ───────────────────────────────────────────────────────
+// ─── String-skipping helpers ──────────────────────────────────────────────────
 
-/// True when position `i` is at the start of a new line.
-#[inline]
-fn is_line_start(buf: &[u8], i: usize) -> bool {
-    i == 0 || buf[i - 1] == b'\n'
-}
-
-/// Index of the first byte past the end of the current line.
-/// The newline byte itself is NOT included in the returned range.
-#[inline]
-fn next_line_end(bytes: &[u8], from: usize) -> usize {
-    match memchr_newline(bytes, from) {
-        Some(pos) => pos,  // points AT the '\n'; callers blank [from..pos)
-        None => bytes.len(),
-    }
-}
-
-/// Fast newline search. Equivalent to `bytes[from..].iter().position(|&b| b == b'\n')`.
-#[inline]
-fn memchr_newline(bytes: &[u8], from: usize) -> Option<usize> {
-    bytes[from..].iter().position(|&b| b == b'\n').map(|p| from + p)
-}
-
-/// Index just past the closing `*/`, or `len` if unterminated.
-fn find_block_comment_end(bytes: &[u8], from: usize) -> usize {
-    let mut i = from;
-    while i + 1 < bytes.len() {
-        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
-            return i + 2;
-        }
-        i += 1;
-    }
-    bytes.len()
-}
-
-/// Skip past a regular string/char literal, returning the index after the
-/// closing delimiter.
-///
-/// FIX (vs original): bounds-check before `i += 2` on escape so we never
-/// advance past `bytes.len()` and the outer loop terminates.
 fn skip_string_literal(bytes: &[u8], from: usize, delim: u8) -> usize {
     let mut i = from;
     while i < bytes.len() {
         match bytes[i] {
             b'\\' => {
-                // Escape sequence: skip one extra byte, but only if it exists.
                 i += if i + 1 < bytes.len() { 2 } else { 1 };
             }
-            b if b == delim => {
-                return i + 1;
-            }
-            _ => {
-                i += 1;
-            }
+            b if b == delim => return i + 1,
+            _ => i += 1,
         }
     }
-    bytes.len() // unterminated — return end of file
+    bytes.len()
 }
 
-/// Skip past a verbatim string (`@"…"`), starting AFTER the opening `"`.
-///
-/// In verbatim strings `""` is an escaped quote; `\"` is NOT.
-/// Returns the index after the closing `"`.
 fn skip_verbatim_string(bytes: &[u8], from: usize) -> usize {
     let mut i = from;
     while i < bytes.len() {
         if bytes[i] == b'"' {
-            // Peek ahead: `""` is an escaped quote, not the end.
             if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
-                i += 2; // skip both quote chars
+                i += 2;
             } else {
-                return i + 1; // closing quote
+                return i + 1;
             }
         } else {
             i += 1;
@@ -298,11 +259,13 @@ fn skip_verbatim_string(bytes: &[u8], from: usize) -> usize {
     bytes.len()
 }
 
-/// Replace bytes in `buf[start..end]` with spaces, preserving newlines.
-fn blank_range(buf: &mut [u8], start: usize, end: usize) {
-    let end = end.min(buf.len());
-    for b in &mut buf[start..end] {
-        if *b != b'\n' {
+// ─── Blanking helper ──────────────────────────────────────────────────────────
+
+#[inline]
+fn blank_line(out: &mut [u8], start: usize, end: usize) {
+    let end = end.min(out.len());
+    for b in &mut out[start..end] {
+        if *b != b'\n' && *b != b'\r' {
             *b = b' ';
         }
     }
@@ -314,57 +277,98 @@ fn blank_range(buf: &mut [u8], start: usize, end: usize) {
 mod tests {
     use super::*;
 
+    fn check(src: &str, extra: &[&str]) -> String {
+        let out = preprocess(src, extra);
+        assert_eq!(
+            out.active_source.len(),
+            src.len(),
+            "byte length changed!\noriginal: {src:?}\nprocessed: {:?}",
+            out.active_source
+        );
+        out.active_source
+    }
+
     #[test]
     fn line_comment_blanked() {
         let src = "int x = 1;\n// Process.Start(\"cmd\");\nint y = 2;\n";
-        let out = preprocess(src, &[]);
-        assert!(!out.active_source.contains("Process.Start"));
-        assert!(out.active_source.contains("int x = 1;"));
-        assert!(out.active_source.contains("int y = 2;"));
+        let out = check(src, &[]);
+        assert!(!out.contains("Process.Start"));
+        assert!(out.contains("int x = 1;"));
+        assert!(out.contains("int y = 2;"));
     }
 
     #[test]
     fn block_comment_blanked() {
         let src = "int x;\n/* Assembly.Load(bytes); */\nint y;\n";
-        let out = preprocess(src, &[]);
-        assert!(!out.active_source.contains("Assembly.Load"));
+        let out = check(src, &[]);
+        assert!(!out.contains("Assembly.Load"));
+        assert!(out.contains("int y;"));
+    }
+
+    #[test]
+    fn multiline_block_comment_blanked() {
+        let src = "int x;\n/* start\nAssembly.Load(bytes);\nend */\nint y;\n";
+        let out = check(src, &[]);
+        assert!(!out.contains("Assembly.Load"));
+        assert!(out.contains("int y;"));
     }
 
     #[test]
     fn sanitized_comment_blanked() {
         let src = "/* SANITIZED */ // Process.Start(\"evil\");\nint y;\n";
-        let out = preprocess(src, &[]);
-        assert!(!out.active_source.contains("Process.Start"));
+        let out = check(src, &[]);
+        assert!(!out.contains("Process.Start"));
     }
 
     #[test]
     fn unity_editor_block_blanked() {
         let src = "#if UNITY_EDITOR\nProcess.Start(\"cmd\");\n#endif\nint safe;\n";
+        let out = check(src, &[]);
+        assert!(!out.contains("Process.Start"));
+        assert!(out.contains("int safe;"));
+    }
+
+    /// Simulates lilToonEditorUtils.cs: whole file wrapped in #if UNITY_EDITOR.
+    #[test]
+    fn whole_file_in_unity_editor_block() {
+        let src = "#if UNITY_EDITOR\nusing UnityEditor;\nProcess.Start(\"cmd\");\nFile.Delete(\"x\");\n#endif\n";
+        let out = check(src, &[]);
+        assert!(!out.contains("Process.Start"));
+        assert!(!out.contains("File.Delete"));
+    }
+
+    /// UTF-8 BOM at the start of the file must not prevent #if from being recognized.
+    #[test]
+    fn bom_at_start_of_file() {
+        let src = "\u{FEFF}#if UNITY_EDITOR\nProcess.Start(\"cmd\");\n#endif\nint ok;\n";
         let out = preprocess(src, &[]);
-        assert!(!out.active_source.contains("Process.Start"));
-        assert!(out.active_source.contains("int safe;"));
+        assert!(
+            !out.active_source.contains("Process.Start"),
+            "BOM prevented #if UNITY_EDITOR from being recognized"
+        );
+        assert!(out.active_source.contains("int ok;"));
     }
 
     #[test]
     fn negated_unity_editor_kept() {
         let src = "#if !UNITY_EDITOR\nProcess.Start(\"cmd\");\n#endif\n";
-        let out = preprocess(src, &[]);
-        assert!(out.active_source.contains("Process.Start"));
+        let out = check(src, &[]);
+        assert!(out.contains("Process.Start"));
     }
 
     #[test]
     fn cvr_cck_block_blanked() {
         let src = "#if CVR_CCK_EXISTS\nAssembly.Load(data);\n#endif\nint ok;\n";
-        let out = preprocess(src, &[]);
-        assert!(!out.active_source.contains("Assembly.Load"));
-        assert!(out.active_source.contains("int ok;"));
+        let out = check(src, &[]);
+        assert!(!out.contains("Assembly.Load"));
+        assert!(out.contains("int ok;"));
     }
 
     #[test]
     fn line_numbers_preserved() {
         let src = "line1\n// comment\nline3\n";
-        let out = preprocess(src, &[]);
-        let lines: Vec<&str> = out.active_source.lines().collect();
+        let out = check(src, &[]);
+        let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0], "line1");
         assert_eq!(lines[2], "line3");
@@ -373,75 +377,119 @@ mod tests {
     #[test]
     fn string_literal_not_blanked() {
         let src = "string s = \"// not a comment\";\n";
-        let out = preprocess(src, &[]);
-        assert!(out.active_source.contains("// not a comment"));
+        let out = check(src, &[]);
+        assert!(out.contains("// not a comment"));
     }
 
     #[test]
     fn or_condition_not_blanked() {
         let src = "#if UNITY_EDITOR || SOMETHING_ELSE\nProcess.Start(\"x\");\n#endif\n";
-        let out = preprocess(src, &[]);
-        assert!(out.active_source.contains("Process.Start"));
+        let out = check(src, &[]);
+        assert!(out.contains("Process.Start"));
     }
-
-    // ── New regression tests for the fixed cases ──────────────────────────
 
     #[test]
     fn verbatim_string_not_blanked() {
-        // @"..." must not cause the preprocessor to consume the rest of the file.
         let src = "string path = @\"C:\\Windows\\System32\";\nint x = 1;\n";
-        let out = preprocess(src, &[]);
-        assert!(out.active_source.contains("int x = 1;"));
+        let out = check(src, &[]);
+        assert!(out.contains("int x = 1;"));
     }
 
     #[test]
     fn verbatim_string_with_escaped_quote() {
-        // @"say ""hello""" — the "" inside is an escaped quote, not end of string.
         let src = "string s = @\"say \"\"hello\"\"\";\nint ok;\n";
-        let out = preprocess(src, &[]);
-        assert!(out.active_source.contains("int ok;"));
+        let out = check(src, &[]);
+        assert!(out.contains("int ok;"));
     }
 
     #[test]
     fn escape_at_eof_no_panic() {
-        // A backslash at the very end of file must not panic or loop infinitely.
         let src = "string s = \"\\\n";
         let out = preprocess(src, &[]);
-        // Just assert it returns something with the same number of lines.
-        assert_eq!(out.active_source.lines().count(), src.lines().count());
+        assert_eq!(out.active_source.len(), src.len());
     }
 
     #[test]
     fn elif_directive_handled() {
         let src =
             "#if UNITY_EDITOR\nProcess.Start(\"a\");\n#elif !UNITY_EDITOR\nProcess.Start(\"b\");\n#endif\n";
-        let out = preprocess(src, &[]);
-        // UNITY_EDITOR branch → blanked; !UNITY_EDITOR branch → active (negated)
-        let starts: Vec<&str> = out
-            .active_source
+        let out = check(src, &[]);
+        let active_starts: Vec<&str> = out
             .lines()
             .filter(|l| l.contains("Process.Start"))
             .collect();
-        // Only the #elif branch (b) should survive.
-        assert_eq!(starts.len(), 1);
-        assert!(starts[0].contains("\"b\""));
+        assert_eq!(active_starts.len(), 1);
+        assert!(active_starts[0].contains("\"b\""));
     }
 
     #[test]
     fn deeply_nested_if_stack() {
         let src = "#if UNITY_EDITOR\n#if DEBUG\nProcess.Start(\"x\");\n#endif\n#endif\nint ok;\n";
-        let out = preprocess(src, &[]);
-        assert!(!out.active_source.contains("Process.Start"));
-        assert!(out.active_source.contains("int ok;"));
+        let out = check(src, &[]);
+        assert!(!out.contains("Process.Start"));
+        assert!(out.contains("int ok;"));
+    }
+
+    /// Unknown define nested inside an inactive block: inner #endif must not
+    /// pop the outer frame and accidentally re-activate the stack.
+    #[test]
+    fn nested_unknown_if_inside_inactive() {
+        let src = "#if UNITY_EDITOR\n#if SOME_UNKNOWN\nProcess.Start(\"x\");\n#endif\n#endif\nint ok;\n";
+        let out = check(src, &[]);
+        assert!(!out.contains("Process.Start"));
+        assert!(out.contains("int ok;"));
     }
 
     #[test]
     fn unterminated_block_comment_no_infinite_loop() {
-        // Must terminate, not loop forever.
         let src = "int x;\n/* unclosed comment\nint y;\n";
         let out = preprocess(src, &[]);
-        // The whole rest of the file gets blanked — just verify it terminates
-        // and produces a string of the same byte length.
         assert_eq!(out.active_source.len(), src.len());
+        assert!(!out.active_source.contains("unclosed comment"));
+        assert!(!out.active_source.contains("int y;"));
+    }
+
+    #[test]
+    fn block_comment_inline_with_code_after() {
+        let src = "int x = /* evil */ 1;\n";
+        let out = check(src, &[]);
+        assert!(!out.contains("evil"));
+        assert!(out.contains("1;"));
+    }
+
+    #[test]
+    fn block_comment_spanning_three_lines() {
+        let src = "int a;\n/*\nAssembly.Load();\n*/\nint b;\n";
+        let out = check(src, &[]);
+        assert!(!out.contains("Assembly.Load"));
+        assert!(out.contains("int a;"));
+        assert!(out.contains("int b;"));
+    }
+
+    #[test]
+    fn extra_inactive_defines_respected() {
+        let src = "#if MY_DEFINE\nProcess.Start(\"x\");\n#endif\nint ok;\n";
+        let out = check(src, &["MY_DEFINE"]);
+        assert!(!out.contains("Process.Start"));
+        assert!(out.contains("int ok;"));
+    }
+
+    #[test]
+    fn byte_length_preserved_crlf() {
+        let src = "#if UNITY_EDITOR\r\nint x;\r\n#endif\r\nint y;\r\n";
+        let out = preprocess(src, &[]);
+        assert_eq!(out.active_source.len(), src.len());
+        assert!(out.active_source.contains("int y;"));
+        assert!(!out.active_source.contains("int x;"));
+    }
+
+    /// Version-specific defines (e.g. UNITY_2021_2_OR_NEWER) are unknown →
+    /// treated as active conservatively (no blanking).
+    #[test]
+    fn version_define_treated_as_active() {
+        let src = "#if UNITY_2021_2_OR_NEWER\nint x = 1;\n#else\nint x = 0;\n#endif\n";
+        let out = check(src, &[]);
+        assert!(out.contains("int x = 1;"));
+        assert!(!out.contains("int x = 0;"));
     }
 }

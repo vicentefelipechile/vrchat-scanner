@@ -63,8 +63,8 @@ pub fn print_report(report: &ScanReport, level: RiskLevel, verbose: bool, caps: 
     println!("{:14} {}", "Total score:".bold(), report.risk.score);
     println!("{:14} {}", "Risk level:".bold(),  level_colored(level));
     println!("{:14} {}", "Action:".bold(),       &report.risk.recommendation);
+    println!("{:14} {}", "Duration:".bold(),     format_duration(report.scan_duration_ms));
     println!("{}", thin.dimmed());
-    println!("{:14} {}ms", "Duration:".bold(), report.scan_duration_ms);
 
     // Always print a verdict — the key outcome in human-readable terms.
     print_verdict(level, &report.findings, caps);
@@ -81,23 +81,44 @@ fn print_finding(f: &Finding, verbose: bool, caps: TermCaps) {
         Severity::Medium   => format!("[MEDIUM   +{}]", f.points).bright_yellow().to_string(),
         Severity::Low      => format!("[LOW      +{}]", f.points).white().to_string(),
     };
-
+ 
     println!("\n{} {}", severity_label, f.detail.bold());
-    println!("  {:10} {}", "File:".dimmed(),    f.location);
-    println!("  {:10} {}", "ID:".dimmed(),      f.id);
+    println!("  {:10} {}", "File:".dimmed(), f.location);
+    println!("  {:10} {}", "ID:".dimmed(), f.id);
     if let Some(ctx) = &f.context {
         println!("  {:10} {}", "Context:".dimmed(), ctx);
     }
-
+ 
+    // Mostrar líneas donde se detectó el problema, si están disponibles.
+    // Cuando hay muchas (> 10) mostramos las primeras 10 y un conteo.
+    if !f.line_numbers.is_empty() {
+        let shown: Vec<String> = f.line_numbers
+            .iter()
+            .take(10)
+            .map(|n| n.to_string())
+            .collect();
+        let suffix = if f.line_numbers.len() > 10 {
+            format!(" … (+{} more)", f.line_numbers.len() - 10)
+        } else {
+            String::new()
+        };
+        let lines_str = format!("{}{}", shown.join(", "), suffix);
+ 
+        if caps.unicode {
+            println!("  {:10} {}", "Lines:".dimmed(), lines_str.yellow());
+        } else {
+            println!("  {:10} {}", "Lines:", lines_str);
+        }
+    }
+ 
     if verbose {
         let explanation = human_explanation(f.id);
-        // Word-wrap at ~60 chars and indent every line
         let wrapped = word_wrap(explanation, 60);
         for line in wrapped {
             println!("  {}", line.dimmed());
         }
     }
-    let _ = caps; // used by callers for separator style
+    let _ = caps;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -460,6 +481,14 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+fn format_duration(ms: u128) -> String {
+    if ms < 1_000 {
+        format!("{ms}ms")
+    } else {
+        format!("{:.2}s", ms as f64 / 1_000.0)
     }
 }
 

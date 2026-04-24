@@ -202,6 +202,7 @@ async fn main() {
             let mut batch: Vec<BatchResult> = Vec::new();
             let mut any_critical = false;
 
+            let batch_start = std::time::Instant::now();
             for (idx, path) in targets.iter().enumerate() {
                 print_file_header(idx + 1, targets.len(), path, caps);
                 let (level, findings) = run_scan_command(path, "cli", None, true, caps);
@@ -238,7 +239,7 @@ async fn main() {
 
             // ── Batch summary (only when multiple files) ──────────────────
             if targets.len() > 1 {
-                print_batch_summary(&batch, caps);
+                print_batch_summary(&batch, batch_start.elapsed().as_millis(), caps);
             }
 
             // ── Offer to save txt report ──────────────────────────────────
@@ -294,6 +295,20 @@ struct BatchResult {
 // File collection
 // ─────────────────────────────────────────────────────────────────────────────
 
+fn canonicalize_clean(path: &std::path::Path) -> std::path::PathBuf {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+ 
+    #[cfg(target_os = "windows")]
+    {
+        let s = canonical.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            return std::path::PathBuf::from(stripped);
+        }
+    }
+ 
+    canonical
+}
+
 /// Expand a list of paths into a deduplicated list of scannable files.
 ///
 /// - Regular files are included as-is (any extension).
@@ -315,7 +330,7 @@ fn collect_unitypackages(paths: &[PathBuf], caps: TermCaps) -> Vec<PathBuf> {
         }
 
         if path.is_file() {
-            let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+            let canonical = canonicalize_clean(path);
             if seen.insert(canonical.clone()) {
                 results.push(canonical);
             }
@@ -355,7 +370,7 @@ fn collect_from_dir(
             .map(|e| e.eq_ignore_ascii_case("unitypackage"))
             .unwrap_or(false)
         {
-            let canonical = path.canonicalize().unwrap_or(path);
+            let canonical = canonicalize_clean(&path);
             if seen.insert(canonical.clone()) {
                 results.push(canonical);
             }
@@ -370,13 +385,13 @@ fn collect_from_dir(
 /// Ask the user whether to continue when the batch has more than 6 files.
 fn prompt_continue_large_batch(count: usize, caps: TermCaps) -> bool {
     use std::io::{self, Write};
-
+ 
     let sep = if caps.unicode {
         "  ════════════════════════════════════════════════════"
     } else {
         "  ===================================================="
     };
-
+ 
     println!();
     println!("{sep}");
     println!("    Large Batch Detected");
@@ -385,16 +400,17 @@ fn prompt_continue_large_batch(count: usize, caps: TermCaps) -> bool {
     println!("  Found {count} .unitypackage files to scan.");
     println!("  Scanning a large number of files may take several minutes.");
     println!();
-    println!("  [Y] Yes, scan all {count} files");
-    println!("  [N] No, cancel (or press Enter)");
+    println!("  [Y] Yes, scan all {count} files (or press Enter)");
+    println!("  [N] No, cancel");
     print!("\n  > ");
     let _ = io::stdout().flush();
-
+ 
     let mut input = String::new();
     if io::stdin().read_line(&mut input).is_err() {
-        return false;
+        return true;
     }
-    matches!(input.trim().to_lowercase().as_str(), "y")
+    let answer = input.trim().to_lowercase();
+    answer.is_empty() || answer == "y"
 }
 
 /// Print a visual separator before each file in a multi-file batch.
@@ -424,13 +440,13 @@ fn print_file_header(idx: usize, total: usize, path: &std::path::Path, caps: Ter
 /// Ask the user whether to save the batch report to a txt file.
 fn prompt_save_report(caps: TermCaps) -> bool {
     use std::io::{self, Write};
-
+ 
     let sep = if caps.unicode {
         "  ════════════════════════════════════════════════════"
     } else {
         "  ===================================================="
     };
-
+ 
     println!();
     println!("{sep}");
     println!("    Save Report");
@@ -438,23 +454,24 @@ fn prompt_save_report(caps: TermCaps) -> bool {
     println!();
     println!("  Would you like to save the scan results to a text file?");
     println!();
-    println!("  [Y] Yes, save report");
-    println!("  [N] No (or press Enter)");
+    println!("  [Y] Yes, save report (or press Enter)");
+    println!("  [N] No");
     print!("\n  > ");
     let _ = io::stdout().flush();
-
+ 
     let mut input = String::new();
     if io::stdin().read_line(&mut input).is_err() {
-        return false;
+        return true;
     }
-    matches!(input.trim().to_lowercase().as_str(), "y")
+    let answer = input.trim().to_lowercase();
+    answer.is_empty() || answer == "y"
 }
 
 /// Print a summary table after scanning multiple files.
-fn print_batch_summary(batch: &[BatchResult], caps: TermCaps) {
-    let sep = if caps.unicode { "═".repeat(52) } else { "=".repeat(52) };
+fn print_batch_summary(batch: &[BatchResult], total_ms: u128, caps: TermCaps) {
+    let sep  = if caps.unicode { "═".repeat(52) } else { "=".repeat(52) };
     let thin = if caps.unicode { "─".repeat(52) } else { "-".repeat(52) };
-
+ 
     println!();
     println!("  {sep}");
     if caps.unicode {
@@ -464,7 +481,7 @@ fn print_batch_summary(batch: &[BatchResult], caps: TermCaps) {
     }
     println!("  {sep}");
     println!();
-
+ 
     for (i, r) in batch.iter().enumerate() {
         let filename = r.path
             .file_name()
@@ -481,17 +498,30 @@ fn print_batch_summary(batch: &[BatchResult], caps: TermCaps) {
             i + 1, level_label, filename, sanitize_note
         );
     }
-
+ 
     println!();
     println!("  {thin}");
-
+ 
     let clean    = batch.iter().filter(|r| r.level == scoring::RiskLevel::Clean).count();
     let low      = batch.iter().filter(|r| r.level == scoring::RiskLevel::Low).count();
     let medium   = batch.iter().filter(|r| r.level == scoring::RiskLevel::Medium).count();
     let high     = batch.iter().filter(|r| r.level == scoring::RiskLevel::High).count();
     let critical = batch.iter().filter(|r| r.level == scoring::RiskLevel::Critical).count();
-
+ 
     println!("  Clean={clean}  Low={low}  Medium={medium}  High={high}  Critical={critical}");
+ 
+    // Tiempo total
+    let duration_str = if total_ms < 1_000 {
+        format!("{total_ms}ms")
+    } else {
+        format!("{:.2}s", total_ms as f64 / 1_000.0)
+    };
+    if caps.unicode {
+        println!("  Total time: {}", duration_str.bold());
+    } else {
+        println!("  Total time: {duration_str}");
+    }
+ 
     println!("  {sep}");
     println!();
 }
@@ -907,20 +937,20 @@ fn prompt_sanitize(
     caps: TermCaps,
 ) -> bool {
     use std::io::{self, Write};
-
+ 
     let out_name = {
         let stem = file.file_stem().unwrap_or_default().to_string_lossy();
         format!("{stem}-sanitized.unitypackage")
     };
-
+ 
     let actions = build_action_list(findings);
-
+ 
     let sep = if caps.unicode {
         "  ════════════════════════════════════════════════════"
     } else {
         "  ===================================================="
     };
-
+ 
     println!();
     println!("{sep}");
     println!("    Sanitize");
@@ -929,7 +959,7 @@ fn prompt_sanitize(
     println!("  Threats (High/Critical) were detected in this package.");
     println!("  Would you like to create a sanitized copy?");
     println!();
-
+ 
     if actions.is_empty() {
         println!("  · All dangerous assets will be neutralized");
     } else {
@@ -937,22 +967,23 @@ fn prompt_sanitize(
             println!("{action}");
         }
     }
-
+ 
     println!();
     println!("  · Threshold  : HIGH");
     println!("  · Output     : {out_name}");
     println!();
-    println!("  [Y] Yes");
-    println!("  [N] No (or Enter)");
-
+    println!("  [Y] Yes (or press Enter)");
+    println!("  [N] No");
+ 
     print!("\n  > ");
     let _ = io::stdout().flush();
-
+ 
     let mut input = String::new();
     if io::stdin().read_line(&mut input).is_err() {
-        return false;
+        return true;
     }
-    matches!(input.trim().to_lowercase().as_str(), "y")
+    let answer = input.trim().to_lowercase();
+    answer.is_empty() || answer == "y"
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
