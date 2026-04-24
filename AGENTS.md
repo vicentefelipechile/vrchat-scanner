@@ -86,7 +86,8 @@ vrcstorage-scanner/
 │   │   │   ├── mod.rs          ← analyze_script(): calls pattern_matcher + url_extractor + obfuscation
 │   │   │   ├── pattern_matcher.rs  ← regex over C# code (dangerous APIs)
 │   │   │   ├── url_extractor.rs    ← embedded URLs + safe domain whitelist
-│   │   │   └── obfuscation.rs      ← base64 ratio, short identifiers, XOR, unicode escapes
+│   │   │   ├── obfuscation.rs      ← base64 ratio, short identifiers, XOR, unicode escapes
+│   │   │   └── preprocessor.rs     ← blanks comments and inactive #if blocks before analysis
 │   │   ├── assets/
 │   │   │   ├── mod.rs          ← analyze_asset(): dispatches by AssetType
 │   │   │   ├── texture_scanner.rs  ← magic bytes, entropy (skips PNG/JPEG/WebP/EXR/HDR/DDS), byte-by-byte polyglot scan with PE validation
@@ -160,6 +161,8 @@ Input (path or bytes)
    │   ├── Structural checks: PATH_TRAVERSAL, FORBIDDEN_EXTENSION, DOUBLE_EXTENSION, DLL_OUTSIDE_PLUGINS
    │   ├── AssetType::Dll     → analysis::dll::analyze_dll()
    │   ├── AssetType::Script  → analysis::scripts::analyze_script()
+   │   │     └── preprocessor::preprocess() → blanks comments + inactive #if blocks
+   │   │         then pattern_matcher / url_extractor / obfuscation run on active_source
    │   ├── AssetType::Texture → analysis::assets::analyze_asset()
    │   ├── AssetType::Audio   → analysis::assets::analyze_asset()
    │   └── AssetType::Prefab/ScriptableObject → analysis::assets::analyze_asset()
@@ -216,6 +219,37 @@ Input (path or bytes)
     cross-references already in memory (GUID lines in `.meta` files).
 - **Do not modify** `run_all_analyses` to add type-specific analysis logic; add it inside the
   corresponding sub-module instead.
+
+### `preprocessor` (within `analysis::scripts`)
+
+- `preprocess(source, extra_inactive) -> PreprocessedSource` — single-pass O(n) preprocessor
+  that blanks comments and inactive `#if` blocks before any pattern-based analysis runs.
+- **`active_source`** — the output field. Same byte length as input; newlines preserved so
+  1-indexed line numbers remain valid. All blanked regions are replaced with spaces.
+- **What is blanked:**
+  - `//` line comments
+  - `/* … */` block comments (including unterminated ones — blanked to EOF)
+  - `#if <inactive>` … `#endif` blocks and the directive lines themselves
+  - `#elif`, `#else`, `#endif` directive lines (the control lines, not their bodies unless inactive)
+- **What is NOT blanked (preserved for analysis):**
+  - String literals `"…"` and char literals `'…'` — content is skipped, not erased
+  - Verbatim strings `@"…"` — content is skipped, not erased
+  - Interpolated verbatim strings `$@"…"` and `@$"…"`
+  - Active code blocks
+- **Inactive define rules:**
+  - `#if UNITY_EDITOR` → blanked (inactive define)
+  - `#if !UNITY_EDITOR` → kept (negation of inactive = potentially active in player builds)
+  - `#if UNITY_EDITOR && X` → blanked if ANY non-negated term is an inactive define
+  - `#if UNITY_EDITOR || X` → kept (OR with unknown = conservatively assume active)
+- **`if_stack` invariant:** starts as `vec![true]` (top-level is always active). Each `#if`
+  pushes a frame; `#endif` pops one. Never pop the last frame — minimum depth is 1.
+- **String literal invariant:** `skip_string_literal` and `skip_verbatim_string` always return
+  an index `<= bytes.len()`. They never advance past EOF even on malformed input.
+- **Verbatim string escape rule:** inside `@"…"`, the sequence `""` is an escaped quote.
+  Backslash (`\`) has no special meaning. Do NOT use `skip_string_literal` for verbatim strings.
+- **Obfuscation exception:** `obfuscation::analyze` runs on the **original** (non-preprocessed)
+  source. Obfuscated identifiers and base64 blobs inside comments are still worth flagging.
+  Only `pattern_matcher` and `url_extractor` operate on `active_source`.
 
 ### `metadata`
 
@@ -372,6 +406,52 @@ Three private functions support the interactive sanitize prompt:
 The prompt uses `═══` separator lines (Unicode) or `===` (ASCII fallback) — **never box-drawing
 characters**. The output filename is computed from the actual input path, not a template string.
 
+### `preprocessor` — rules and invariants
+
+All analysis of C# scripts goes through `preprocessor::preprocess()` before reaching
+`pattern_matcher` and `url_extractor`. The following invariants must always hold:
+
+**Must blank:**
+- `//` line comments
+- `/* … */` block comments (blank from `/*` to `*/` inclusive; unterminated = blank to EOF)
+- `#if <inactive>` … `#endif` block bodies
+- All `#if` / `#elif` / `#else` / `#endif` directive lines themselves
+
+**Must NOT blank (skip over without erasing):**
+- Contents of `"…"` string literals
+- Contents of `'…'` char literals
+- Contents of `@"…"` verbatim strings — escape is `""`, not `\"`
+- Contents of `$@"…"` and `@$"…"` interpolated verbatim strings
+
+**String literal dispatch order (critical — must match this order in code):**
+1. `@"` → `skip_verbatim_string` — checked BEFORE plain `"`
+2. `$@"` / `@$"` → `skip_verbatim_string`
+3. `"` → `skip_string_literal`
+4. `'` → `skip_string_literal`
+
+> **Never** use `skip_string_literal` for verbatim strings. Verbatim strings use `""` as
+> the escape sequence, not `\`. Mis-routing causes the scanner to consume code after the
+> string as if it were part of the literal, silently dropping real findings.
+
+**`skip_string_literal` safety rule:**
+```rust
+// CORRECT — bounds-check before advancing past the escape character
+b'\\' => { i += if i + 1 < bytes.len() { 2 } else { 1 }; }
+
+// WRONG — can advance i past bytes.len() on EOF, corrupting loop state
+b'\\' => { i += 2; }
+```
+
+**`if_stack` management:**
+- Minimum stack depth is always 1 (the implicit top-level active frame).
+- `#endif` with `if_stack.len() == 1` is a no-op (malformed input guard).
+- Pop THEN evaluate when processing `#elif` (pop old branch frame, push new one).
+
+**`obfuscation::analyze` exception:**
+Obfuscation checks run on the **raw original source**, not on `active_source`. This is
+intentional: base64 blobs and short identifiers inside comments or inactive blocks are
+still worth flagging at low severity since they may indicate the file was tampered with.
+
 ### `txt_reporter` — output contract
 
 `render_batch_txt` and `render_single_txt` must:
@@ -396,6 +476,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding>             // impor
 // Scripts
 pub fn analyze_script(data: &[u8], source: &str, location: &str) -> Vec<Finding> // mod.rs
 pub fn analyze(source: &str, location: &str) -> Vec<Finding>            // pattern_matcher, url_extractor, obfuscation
+pub fn preprocess(source: &str, extra_inactive: &[&str]) -> PreprocessedSource   // preprocessor
 
 // Assets
 pub fn analyze(data: &[u8], location: &str) -> Vec<Finding>             // texture_scanner, audio_scanner, prefab_scanner
@@ -547,6 +628,7 @@ The following is the definitive list of `FindingId` variants as they exist in
 
 **Asset scanners**
 - `MagicMismatch` → `MAGIC_MISMATCH`
+- `MagicMismatchImage` → `MAGIC_MISMATCH_IMAGE`
 - `TextureHighEntropy` → `TEXTURE_HIGH_ENTROPY`
 - `AudioUnusualEntropy` → `AUDIO_UNUSUAL_ENTROPY`
 - `PolyglotFile` → `POLYGLOT_FILE`
@@ -559,6 +641,50 @@ The following is the definitive list of `FindingId` variants as they exist in
 - `PrefabExcessiveGuids` → `PREFAB_EXCESSIVE_GUIDS`
 - `PrefabInlineB64` → `PREFAB_INLINE_B64`
 - `PrefabManyScripts` → `PREFAB_MANY_SCRIPTS`
+
+### `MagicMismatch` vs `MagicMismatchImage` — decision matrix
+
+Both findings fire when a texture's actual binary format does not match its declared extension.
+They are **mutually exclusive**: only one is emitted per file.
+
+| Condition | Finding | Severity | Points |
+|---|---|---|---|
+| File is not any recognised image format | `MagicMismatch` | Medium | `PTS_MAGIC_MISMATCH` = 25 |
+| File IS a recognised image but wrong format (e.g. `.png` that is actually a JPEG) | `MagicMismatchImage` | Low | `PTS_MAGIC_MISMATCH_IMAGE` = 2 |
+
+**Decision logic in `texture_scanner::analyze`:**
+
+```
+magic_ok = declared extension matches actual magic bytes?
+           │
+           ├─ YES → no mismatch finding; proceed to entropy + polyglot checks
+           │
+           └─ NO  → is_any_image(data)?
+                     │
+                     ├─ YES → MagicMismatchImage  (Low, 2 pts)
+                     │        mislabelled image — usually an export/rename mistake
+                     │        entropy + polyglot checks still run (magic_ok = false)
+                     │
+                     └─ NO  → MagicMismatch       (Medium, 25 pts)
+                              file is not a recognised image at all — suspicious disguise
+                              entropy + polyglot checks still run
+```
+
+**`is_natively_compressed` flag interaction:**
+- `is_natively_compressed` is `true` only when the magic bytes **confirm** the format (e.g. PNG
+  magic for a `.png` file). A mislabelled file (`magic_ok = false`) always has
+  `is_natively_compressed = false`, so entropy is checked even for compressed formats.
+- This means a `.png` file that is actually a JPEG still goes through the entropy check, which
+  may produce an additional `TextureHighEntropy` finding if the entropy is abnormal.
+
+**`is_any_image` helper — recognised formats:**
+PNG, JPEG, EXR, DDS, HDR (`#?RADIANCE` / `#?RGBE`), BMP, PSD, WebP (`RIFF…WEBP`).
+TGA is **not** included because TGA has no universal magic bytes; it is identified by extension
+only and is always treated as `magic_ok = true` to avoid false positives.
+
+**When to add a new format to `is_any_image`:**
+Add it when the format has a reliable, unique magic byte sequence AND it is commonly used
+in Unity packages. Do not add formats that share magic bytes with executable formats.
 
 ### Reference scoring table
 
@@ -578,7 +704,6 @@ modules.
 | Unknown `[DllImport]` | `CS_DLLIMPORT_UNKNOWN` | High | `PTS_CS_DLLIMPORT_UNKNOWN` = 60 |
 | Raw socket import (ws2_32) | `DLL_IMPORT_SOCKETS` | High | `PTS_DLL_IMPORT_SOCKETS` = 60 |
 | URL to unknown domain / hardcoded IP | `CS_URL_UNKNOWN_DOMAIN` / `CS_IP_HARDCODED` | High | `PTS_CS_URL_UNKNOWN_DOMAIN` = 50, `PTS_CS_IP_HARDCODED` = 50 |
-| Magic bytes mismatch | `MAGIC_MISMATCH` | Medium | `PTS_MAGIC_MISMATCH` = 25 |
 | Double extension | `DOUBLE_EXTENSION` | High | `PTS_DOUBLE_EXTENSION` = 50 |
 | PE section entropy ≥ 7.2 | `PE_HIGH_ENTROPY_SECTION` | High | `PTS_PE_HIGH_ENTROPY_HIGH` = 55 |
 | WinInet/WinHTTP import | `DLL_IMPORT_INTERNET` | High | `PTS_DLL_IMPORT_INTERNET` = 45 |
@@ -591,6 +716,7 @@ modules.
 | `System.Reflection.Emit` | `CS_REFLECTION_EMIT` | Medium | `PTS_CS_REFLECTION_EMIT` = 40 |
 | DLL outside `Assets/Plugins/` | `DLL_OUTSIDE_PLUGINS` | Medium | `PTS_DLL_OUTSIDE_PLUGINS` = 35 |
 | Windows Registry access (C#) | `CS_REGISTRY_ACCESS` | Medium | `PTS_CS_REGISTRY_ACCESS` = 35 |
+| VirtualAlloc import | `DLL_IMPORT_VIRTUAL_ALLOC` | High | `PTS_DLL_IMPORT_VIRTUAL_ALLOC` = 35 |
 | Unicode escape obfuscation | `CS_UNICODE_ESCAPES` | High | `PTS_CS_UNICODE_ESCAPES` = 30 |
 | HTTP/WebClient in C# | `CS_HTTP_CLIENT` | Medium | `PTS_CS_HTTP_CLIENT` = 30 |
 | `unsafe` code in C# | `CS_UNSAFE_BLOCK` | Medium | `PTS_CS_UNSAFE_BLOCK` = 30 |
@@ -598,7 +724,7 @@ modules.
 | External `.meta` reference | `META_EXTERNAL_REF` | Medium | `PTS_META_EXTERNAL_REF` = 25 |
 | Long Base64 blob | `CS_BASE64_HIGH_RATIO` | Medium | `PTS_CS_BASE64_HIGH_RATIO` = 25 |
 | Marshal ops in C# | `CS_MARSHAL_OPS` | Medium | `PTS_CS_MARSHAL_OPS` = 25 |
-| VirtualAlloc import | `DLL_IMPORT_VIRTUAL_ALLOC` | High | `PTS_DLL_IMPORT_VIRTUAL_ALLOC` = 35 |
+| Magic bytes mismatch (non-image) | `MAGIC_MISMATCH` | Medium | `PTS_MAGIC_MISMATCH` = 25 |
 | XOR decryption pattern | `CS_XOR_DECRYPTION` | Medium | `PTS_CS_XOR_DECRYPTION` = 20 |
 | PE section entropy 6.8–7.2 | `PE_HIGH_ENTROPY_SECTION` | Medium | `PTS_PE_HIGH_ENTROPY_MEDIUM` = 20 |
 | Future timestamp in `.meta` | `META_FUTURE_TIMESTAMP` | Medium | `PTS_META_FUTURE_TIMESTAMP` = 20 |
@@ -622,6 +748,7 @@ modules.
 | PE parse error | `PE_PARSE_ERROR` | Low | `PTS_PE_PARSE_ERROR` = 5 |
 | Prefab excessive GUIDs | `PREFAB_EXCESSIVE_GUIDS` | Low | `PTS_PREFAB_EXCESSIVE_GUIDS` = 5 |
 | Prefab many scripts | `PREFAB_MANY_SCRIPTS` | Low | `PTS_PREFAB_MANY_SCRIPTS` = 5 |
+| Image in wrong format (mislabelled) | `MAGIC_MISMATCH_IMAGE` | Low | `PTS_MAGIC_MISMATCH_IMAGE` = 2 |
 
 ### Final risk classification
 
@@ -698,7 +825,7 @@ Current patterns:
 | `CS_BINARY_FORMATTER` | `BinaryFormatter`, `System.Runtime.Serialization.Formatters.Binary` |
 | `CS_DLLIMPORT` | `[DllImport("...")]` — captures the DLL name |
 | `CS_UNSAFE` | `\bunsafe\b` — unsafe keyword in any position |
-| `CS_REGISTRY` | `Registry.` or `Microsoft.Win32.Registry` |
+| `CS_REGISTRY` | `Microsoft.Win32.Registry` or `Registry.<Hive>` or `RegistryKey` or `HKEY_*` |
 | `CS_ENVIRONMENT` | `Environment.GetEnvironmentVariable/UserName/MachineName` |
 | `CS_CRYPTO` | `AesCryptoServiceProvider`, `RSACryptoServiceProvider`, `BCryptEncrypt`, `CryptEncrypt` |
 | `CS_MARSHAL` | `Marshal.Copy/AllocHGlobal/GetFunctionPointerForDelegate` |
@@ -756,6 +883,19 @@ Use `is_safe_domain(url: &str) -> bool` (from `utils::patterns`) to check URLs a
   ```rust
   Finding::new(FindingId::PeHighEntropySection, Severity::High, 50, "path", "detail")
   ```
+
+### Preprocessor test conventions
+
+The preprocessor has its own `#[cfg(test)]` suite in `src/analysis/scripts/preprocessor.rs`.
+When adding preprocessor tests:
+
+- Always verify that `active_source.len() == source.len()` — blanking must not change byte length.
+- Test **both sides** of every condition: the blanked case and the kept case.
+- Cover all string literal types: `"…"`, `'…'`, `@"…"`, `$@"…"`.
+- Always include an EOF edge-case test for any new string-skipping logic (backslash at EOF,
+  unterminated string at EOF, unterminated block comment).
+- Preprocessor tests must never assert on the exact content of blanked regions (spaces) —
+  only assert on what is present or absent by name (e.g. `contains("Process.Start")`).
 
 ### Running tests
 
@@ -903,6 +1043,64 @@ output contract (see Section 5).
 `collect_from_dir` must only collect `.unitypackage` files from directories. Walking other
 extensions from a folder would silently scan files the user did not intend to submit. Files
 passed as explicit arguments are always scanned regardless of extension.
+
+### ❌ Using `skip_string_literal` for verbatim strings (`@"…"`)
+
+Verbatim strings use `""` as the escape sequence, not `\`. Routing `@"…"` through
+`skip_string_literal` causes it to mis-parse the string: it interprets `\"` as an escape
+inside a verbatim string (which it is not), and may consume code following the string as
+if it were part of the literal.
+
+```rust
+// ❌ Wrong — verbatim string mis-parsed, real findings get dropped
+if bytes[i] == b'"' {
+    i = skip_string_literal(bytes, i + 1, b'"');
+    continue;
+}
+
+// ✓ Correct — check for @ prefix BEFORE the plain " handler
+if i + 1 < len && bytes[i] == b'@' && bytes[i + 1] == b'"' {
+    i = skip_verbatim_string(bytes, i + 2);
+    continue;
+}
+if bytes[i] == b'"' {
+    i = skip_string_literal(bytes, i + 1, b'"');
+    continue;
+}
+```
+
+### ❌ Advancing `i` past EOF in `skip_string_literal`
+
+```rust
+// ❌ Wrong — if i == len-1, i becomes len+1 (wraps or goes OOB)
+b'\\' => { i += 2; }
+
+// ✓ Correct — bound the advance
+b'\\' => { i += if i + 1 < bytes.len() { 2 } else { 1 }; }
+```
+
+### ❌ Emitting `MagicMismatch` for mislabelled images
+
+When a texture's actual binary format is a recognised image format (just a different one than
+declared), use `MagicMismatchImage` (Low, 2 pts), not `MagicMismatch` (Medium, 25 pts).
+The distinction matters: a `.png` that is actually a JPEG is almost certainly an accidental
+rename, not an attack. Only emit `MagicMismatch` when the file is not any recognised image.
+
+```rust
+// ❌ Wrong — penalises innocent format mismatches too heavily
+if !magic_ok {
+    findings.push(Finding::new(FindingId::MagicMismatch, ...));
+}
+
+// ✓ Correct — distinguish disguised executables from mislabelled images
+if !magic_ok {
+    if is_any_image(data) {
+        findings.push(Finding::new(FindingId::MagicMismatchImage, Severity::Low, PTS_MAGIC_MISMATCH_IMAGE, ...));
+    } else {
+        findings.push(Finding::new(FindingId::MagicMismatch, Severity::Medium, PTS_MAGIC_MISMATCH, ...));
+    }
+}
+```
 
 ---
 
