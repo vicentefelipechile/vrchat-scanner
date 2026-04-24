@@ -8,11 +8,12 @@ fn bench_entropy(c: &mut Criterion) {
 }
 
 fn bench_script_analysis(c: &mut Criterion) {
-    let source = include_str!("../tests/fixtures/clean/clean_script.cs");
+    let source = include_str!("../tests/fixtures/clean/clean_script.cs").as_bytes();
     c.bench_function("analyze_script_clean", |b| {
         b.iter(|| {
             vrcstorage_scanner::analysis::scripts::analyze_script(
                 black_box(source),
+                "cli",
                 "Assets/Scripts/Clean.cs",
             )
         });

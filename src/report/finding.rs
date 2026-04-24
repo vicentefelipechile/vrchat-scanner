@@ -21,10 +21,6 @@ impl std::fmt::Display for Severity {
 }
 
 /// Every distinct rule ID the scanner can emit.
-///
-/// Serde serialises each variant in `SCREAMING_SNAKE_CASE` (via per-variant
-/// `#[serde(rename = "…")]` for names that need exact control) so the JSON
-/// wire format is identical to the previous plain-string representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FindingId {
     // ── Structural / path ──────────────────────────────────────────────────
@@ -134,6 +130,11 @@ pub enum FindingId {
     // ── Assets ────────────────────────────────────────────────────────────
     #[serde(rename = "MAGIC_MISMATCH")]
     MagicMismatch,
+    /// The file is a valid image but in a different format than its extension.
+    /// E.g. a file named `.png` that is actually a JPEG.
+    /// Lower severity than `MagicMismatch` — mislabelled but not inherently malicious.
+    #[serde(rename = "MAGIC_MISMATCH_IMAGE")]
+    MagicMismatchImage,
     #[serde(rename = "TEXTURE_HIGH_ENTROPY")]
     TextureHighEntropy,
     #[serde(rename = "AUDIO_UNUSUAL_ENTROPY")]
@@ -207,6 +208,7 @@ impl std::fmt::Display for FindingId {
             FindingId::DllImportSysinfo            => "DLL_IMPORT_SYSINFO",
             FindingId::DllStringsSuspiciousPath    => "DLL_STRINGS_SUSPICIOUS_PATH",
             FindingId::MagicMismatch               => "MAGIC_MISMATCH",
+            FindingId::MagicMismatchImage          => "MAGIC_MISMATCH_IMAGE",
             FindingId::TextureHighEntropy          => "TEXTURE_HIGH_ENTROPY",
             FindingId::AudioUnusualEntropy         => "AUDIO_UNUSUAL_ENTROPY",
             FindingId::PolyglotFile                => "POLYGLOT_FILE",
@@ -224,19 +226,12 @@ impl std::fmt::Display for FindingId {
 /// A single detected finding from any analysis stage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {
-    /// Typed rule identifier
     pub id: FindingId,
     pub severity: Severity,
-    /// Risk points contributed by this finding
     pub points: u32,
-    /// File path inside the package (e.g. "Assets/Plugins/MyPlugin.dll")
     pub location: String,
-    /// Human-readable description of the finding
     pub detail: String,
-    /// Optional extra context (URL, function name, etc.)
     pub context: Option<String>,
-    /// 1-indexed line numbers where the pattern was found.
-    /// Empty for binary assets, DLLs, and package-level findings.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub line_numbers: Vec<u64>,
 }
@@ -265,8 +260,6 @@ impl Finding {
         self
     }
 
-    /// Attach 1-indexed source line numbers where the pattern was matched.
-    /// Used by the sanitize module to know which lines to comment out.
     pub fn with_line_numbers(mut self, lines: Vec<u64>) -> Self {
         self.line_numbers = lines;
         self

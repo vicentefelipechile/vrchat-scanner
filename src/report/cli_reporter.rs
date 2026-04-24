@@ -225,6 +225,13 @@ fn human_explanation(id: FindingId) -> &'static str {
              For example, a file named '.png' that is actually a Windows \
              executable. This is a disguise technique.",
 
+        FindingId::MagicMismatchImage =>
+            "The file's extension does not match its actual image format — for example, \
+             a file named '.png' that is internally a JPEG. This is usually caused by \
+             an export or renaming mistake and is not inherently malicious. However, \
+             it may indicate the file was deliberately mislabelled to bypass \
+             format-specific checks.",
+
         FindingId::DoubleExtension =>
             "A file uses two extensions (e.g., file.png.dll) to make an \
              executable look like an innocent image or audio file.",

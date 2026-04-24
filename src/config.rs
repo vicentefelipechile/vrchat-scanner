@@ -299,6 +299,11 @@ pub const PTS_DLL_IP_HARDCODED: u32 = 50;
 /// `MagicMismatch` — File's actual format does not match its declared extension.
 pub const PTS_MAGIC_MISMATCH: u32 = 25;
 
+/// `MagicMismatchImage` — declared image extension does not match actual format,
+/// but the file IS a recognised image format (e.g. a .png that is actually a JPEG).
+/// Low severity — mislabelled but not inherently malicious.
+pub const PTS_MAGIC_MISMATCH_IMAGE: u32 = 2;
+
 /// `TextureHighEntropy` — Texture entropy above `ENTROPY_TEXTURE_HIGH`.
 /// Only fires for uncompressed formats (PNG/JPEG/WebP are exempt).
 pub const PTS_TEXTURE_HIGH_ENTROPY: u32 = 20;
