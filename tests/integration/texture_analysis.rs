@@ -42,12 +42,17 @@ fn valid_png_no_magic_mismatch() {
 
 #[test]
 fn wrong_magic_for_png_extension_flagged() {
-    // JPEG bytes but declared as .png
-    let data = make_jpg(&[0u8; 600]);
-    let findings = texture_scanner::analyze(&data, "Assets/Textures/icon.png");
+    // JPEG data declared as .png — the file IS a valid image, just mislabelled,
+    // so the scanner emits MagicMismatchImage (Low) not MagicMismatch (Medium).
+    let jpeg_data = &[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F'];
+    let findings = analyze(jpeg_data, "Assets/Textures/icon.png");
 
-    let has = findings.iter().any(|f| f.id == FindingId::MagicMismatch);
-    assert!(has, "MAGIC_MISMATCH not detected for JPEG data with .png extension; got: {:#?}", findings);
+    let has = findings.iter().any(|f| f.id == FindingId::MagicMismatchImage);
+    assert!(has, "MAGIC_MISMATCH_IMAGE not detected for JPEG data with .png extension; got: {:#?}", findings);
+
+    // Must NOT emit the higher-severity MagicMismatch for a merely mislabelled image.
+    let no_hard = findings.iter().all(|f| f.id != FindingId::MagicMismatch);
+    assert!(no_hard, "MagicMismatch (Medium) should not fire for a valid image in the wrong format; got: {:#?}", findings);
 }
 
 #[test]
