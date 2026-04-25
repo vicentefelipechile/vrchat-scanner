@@ -97,11 +97,9 @@ fn process_lines(source: &str, inactive: &[&str]) -> String {
                     let parent_active = all_active(&if_stack);
                     if_stack.push(parent_active && !top);
                 }
-            } else if trimmed.starts_with("#endif") {
-                if if_stack.len() > 1 {
-                    if_stack.pop();
-                }
-            }
+            } else if trimmed.starts_with("#endif") && if_stack.len() > 1 {
+				if_stack.pop();
+			}
 
             // Preprocessor directives cannot legally appear inside a block
             // comment in C#, so reset the flag to avoid spill-over.

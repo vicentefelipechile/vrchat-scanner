@@ -64,7 +64,7 @@ pub fn check(location: &str, data: &[u8], source: &str) -> WhitelistVerdict {
     // If hashes are registered, compute SHA-256 and compare.
     if !entry.sha256_hashes.is_empty() {
         let hash = hex::encode(Sha256::digest(data));
-        if entry.sha256_hashes.iter().any(|h| *h == hash.as_str()) {
+        if entry.sha256_hashes.contains(&hash.as_str()) {
             return WhitelistVerdict::FullyTrusted { name: entry.name };
         }
     }

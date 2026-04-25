@@ -30,10 +30,10 @@ pub fn render_batch_txt(entries: &[BatchEntry<'_>]) -> String {
     // ── Summary table ─────────────────────────────────────────────────────
     writeln!(out, "SUMMARY").unwrap();
     writeln!(out, "{thin}").unwrap();
-    writeln!(out, "  {:<6}  {:<12}  {:<8}  {}",
-        "Score", "Risk Level", "Sanitize", "File").unwrap();
-    writeln!(out, "  {:<6}  {:<12}  {:<8}  {}",
-        "-----", "----------", "--------", "----").unwrap();
+	writeln!(out, "  {:<6}  {:<12}  {:<8}  File",
+		"Score", "Risk Level", "Sanitize").unwrap();
+	writeln!(out, "  {:<6}  {:<12}  {:<8}  ----",
+		"-----", "----------", "--------").unwrap();
 
     for entry in entries {
         let sanitize_str = if entry.sanitized { "YES" } else { "no" };
