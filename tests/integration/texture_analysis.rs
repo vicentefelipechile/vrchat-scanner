@@ -1,6 +1,7 @@
 //! Integration tests — Binary asset scanning (textures, audio, prefabs).
 
 use vrcstorage_scanner::analysis::assets::{analyze_asset, texture_scanner, audio_scanner, prefab_scanner};
+use vrcstorage_scanner::analysis::assets::texture_scanner::analyze;
 use vrcstorage_scanner::ingestion::AssetType;
 use vrcstorage_scanner::report::FindingId;
 
