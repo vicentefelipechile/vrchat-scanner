@@ -902,18 +902,16 @@ fn build_action_list(findings: &[report::Finding]) -> Vec<String> {
         let loc = f.location.as_str();
         let lower = loc.to_lowercase();
 
-        if lower.ends_with(".cs") {
-            let label = finding_api_label(f.id);
-            if !label.is_empty() {
-                script_apis.entry(loc).or_default().insert(label);
-            } else {
-                script_apis.entry(loc).or_default();
-            }
-        } else if lower.ends_with(".dll") || lower.ends_with(".so") {
-            remove_files.insert(loc);
-        } else {
-            remove_files.insert(loc);
-        }
+		if lower.ends_with(".cs") {
+			let label = finding_api_label(f.id);
+			if !label.is_empty() {
+				script_apis.entry(loc).or_default().insert(label);
+			} else {
+				script_apis.entry(loc).or_default();
+			}
+		} else {
+			remove_files.insert(loc);
+		}
     }
 
     let mut actions = Vec::new();
