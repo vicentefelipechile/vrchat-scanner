@@ -85,7 +85,7 @@ pub const SCORE_HIGH_MAX: u32 = 150;
 /// `ForbiddenExtension` — Executable file type (.exe, .bat, .ps1, …) inside
 /// the package.  No legitimate Unity content should ever ship a standalone
 /// runnable file.  Highest single-finding score in the system.
-pub const PTS_FORBIDDEN_EXTENSION: u32 = 90;
+pub const PTS_FORBIDDEN_EXTENSION: u32 = 250;
 
 /// `PathTraversal` — A `../` or `..\` sequence in an asset path.
 /// Can be exploited to write files outside the Unity project directory.

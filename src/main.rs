@@ -123,19 +123,15 @@ async fn main() {
             let mut batch: Vec<BatchResult> = Vec::new();
 
             for path in &targets {
-                let (
-                    level,
-                    _findings
-                ) = run_scan_command(path, &output, None, false, caps);
+                let (level, _findings) = run_scan_command(path, &output, None, false, caps);
                 if level == scoring::RiskLevel::Critical {
                     any_critical = true;
                 }
                 batch.push(BatchResult {
                     path: path.clone(),
                     level,
-                    // findings,
+                    findings: _findings,
                     sanitized: false,
-                    // report: None, // not captured in CLI mode — report already printed
                 });
             }
 
@@ -211,35 +207,59 @@ async fn main() {
                     any_critical = true;
                 }
 
-                // Per-file sanitize prompt for .unitypackage with High/Critical findings
-                let is_unitypackage = path
-                    .extension()
-                    .map(|e| e.eq_ignore_ascii_case("unitypackage"))
-                    .unwrap_or(false);
-
-                let mut sanitized = false;
-                if is_unitypackage {
-                    use scoring::RiskLevel;
-                    let has_high = matches!(level, RiskLevel::High | RiskLevel::Critical);
-                    if has_high && prompt_sanitize(path, &findings, caps) {
-                        let out = default_sanitize_output(path);
-                        run_sanitize_command(path, &out, "high", false, false, caps);
-                        sanitized = true;
-                    }
-                }
-
                 batch.push(BatchResult {
                     path: path.clone(),
                     level,
-                    // findings,
-                    sanitized,
-                    // report: None,
+                    findings,
+                    sanitized: false,
                 });
             }
 
             // ── Batch summary (only when multiple files) ──────────────────
             if targets.len() > 1 {
                 print_batch_summary(&batch, batch_start.elapsed().as_millis(), caps);
+            }
+
+            // ── Sanitize prompt — una sola vez al final, para todos los
+            //    candidatos High/Critical que sean .unitypackage ────────────
+            {
+                use scoring::RiskLevel;
+
+                let candidates: Vec<usize> = batch
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, r)| {
+                        let is_unitypackage = r.path
+                            .extension()
+                            .map(|e| e.eq_ignore_ascii_case("unitypackage"))
+                            .unwrap_or(false);
+                        let has_critical_finding = r.findings
+                            .iter()
+                            .any(|f| f.severity == report::Severity::Critical);
+                        let needs_sanitize =
+                            matches!(r.level, RiskLevel::High | RiskLevel::Critical)
+                            || has_critical_finding;
+                        is_unitypackage && needs_sanitize
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+
+                if !candidates.is_empty() {
+                    // Construir lista de archivos candidatos para mostrar en el prompt
+                    let candidate_refs: Vec<(&std::path::Path, &[report::Finding])> = candidates
+                        .iter()
+                        .map(|&i| (batch[i].path.as_path(), batch[i].findings.as_slice()))
+                        .collect();
+
+                    if prompt_sanitize_batch(&candidate_refs, caps) {
+                        for &i in &candidates {
+                            let path = &batch[i].path.clone();
+                            let out = default_sanitize_output(path);
+                            run_sanitize_command(path, &out, "high", false, false, caps);
+                            batch[i].sanitized = true;
+                        }
+                    }
+                }
             }
 
             // ── Offer to save txt report ──────────────────────────────────
@@ -285,9 +305,8 @@ async fn main() {
 struct BatchResult {
     path: PathBuf,
     level: scoring::RiskLevel,
-    // findings: Vec<report::Finding>,
+    findings: Vec<report::Finding>,
     sanitized: bool,
-    // Populated only when we need full report data for txt output.
     // report: Option<report::ScanReport>,
 }
 
@@ -929,53 +948,71 @@ fn build_action_list(findings: &[report::Finding]) -> Vec<String> {
     actions
 }
 
-fn prompt_sanitize(
-    file: &std::path::Path,
-    findings: &[report::Finding],
+fn prompt_sanitize_batch(
+    candidates: &[(&std::path::Path, &[report::Finding])],
     caps: TermCaps,
 ) -> bool {
     use std::io::{self, Write};
- 
-    let out_name = {
-        let stem = file.file_stem().unwrap_or_default().to_string_lossy();
-        format!("{stem}-sanitized.unitypackage")
-    };
- 
-    let actions = build_action_list(findings);
- 
+
     let sep = if caps.unicode {
         "  ════════════════════════════════════════════════════"
     } else {
         "  ===================================================="
     };
- 
+
     println!();
     println!("{sep}");
-    println!("    Sanitize");
-    println!("{sep}");
-    println!();
-    println!("  Threats (High/Critical) were detected in this package.");
-    println!("  Would you like to create a sanitized copy?");
-    println!();
- 
-    if actions.is_empty() {
-        println!("  · All dangerous assets will be neutralized");
+    if caps.unicode {
+        println!("{}", "    Sanitize".bold());
     } else {
-        for action in &actions {
-            println!("{action}");
-        }
+        println!("    Sanitize");
     }
- 
+    println!("{sep}");
     println!();
-    println!("  · Threshold  : HIGH");
-    println!("  · Output     : {out_name}");
+
+    if candidates.len() == 1 {
+        println!("  Threats (High/Critical) were detected in this package.");
+    } else {
+        println!(
+            "  Threats (High/Critical) were detected in {} packages.",
+            candidates.len()
+        );
+    }
+    println!("  Would you like to create sanitized copies?");
     println!();
-    println!("  [Y] Yes (or press Enter)");
+
+    // Mostrar acciones por archivo
+    for (file, findings) in candidates {
+        let out_name = {
+            let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+            format!("{stem}-sanitized.unitypackage")
+        };
+        let actions = build_action_list(findings);
+
+        if caps.unicode {
+            println!("  {}", file.display().to_string().bold().white());
+        } else {
+            println!("  {}", file.display());
+        }
+        println!("  -> Output: {out_name}");
+
+        if actions.is_empty() {
+            println!("     · All dangerous assets will be neutralized");
+        } else {
+            for action in &actions {
+                println!("  {action}");
+            }
+        }
+        println!();
+    }
+
+    println!("  Threshold  : HIGH");
+    println!();
+    println!("  [Y] Yes, sanitize all (or press Enter)");
     println!("  [N] No");
- 
     print!("\n  > ");
     let _ = io::stdout().flush();
- 
+
     let mut input = String::new();
     if io::stdin().read_line(&mut input).is_err() {
         return true;

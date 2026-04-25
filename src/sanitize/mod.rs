@@ -228,6 +228,25 @@ pub fn run_sanitize(
             }
 
             // ── Everything else: keep ─────────────────────────────────────
+            AssetType::Other(ext) => {
+                let ext_lower = ext.to_lowercase();
+                let is_forbidden = crate::config::FORBIDDEN_EXTENSIONS
+                    .contains(&ext_lower.as_str());
+
+                if is_forbidden && !relevant_findings.is_empty() {
+                    guids_to_remove.insert(guid.clone());
+                    removed_entries.push(RemovedEntry {
+                        guid: guid.clone(),
+                        original_path: path.clone(),
+                        finding_ids: relevant_findings.iter().map(|f| f.id).collect(),
+                    });
+                } else {
+                    kept_entries += 1;
+                }
+            }
+
+            // ── Everything else: keep ─────────────────────────────────────
+            #[allow(unreachable_patterns)]
             _ => {
                 kept_entries += 1;
             }
