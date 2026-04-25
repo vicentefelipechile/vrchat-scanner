@@ -56,6 +56,20 @@ fn wrong_magic_for_png_extension_flagged() {
 }
 
 #[test]
+fn non_image_data_with_png_extension_flagged() {
+    // Random binary — not a valid image of any kind
+    let garbage = b"This is not an image at all \x00\x01\x02\x03";
+    let findings = analyze(garbage, "Assets/Textures/payload.png");
+
+    let has = findings.iter().any(|f| f.id == FindingId::MagicMismatch);
+    assert!(has, "MAGIC_MISMATCH not detected for non-image data with .png extension; got: {:#?}", findings);
+
+    // Must NOT emit the softer MagicMismatchImage here.
+    let no_soft = findings.iter().all(|f| f.id != FindingId::MagicMismatchImage);
+    assert!(no_soft, "MagicMismatchImage should not fire for non-image binary data; got: {:#?}", findings);
+}
+
+#[test]
 fn pe_embedded_inside_png_is_polyglot() {
     // Build a valid minimal DOS+PE header so the stricter validator accepts it.
     //
