@@ -5,6 +5,7 @@
 [![Rust](https://img.shields.io/badge/rust-1.76%2B-orange?logo=rust)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Release](https://github.com/vicentefelipechile/vrchat-scanner/actions/workflows/release.yml/badge.svg)](https://github.com/vicentefelipechile/vrchat-scanner/actions/workflows/release.yml)
+[![CI](https://github.com/vicentefelipechile/vrchat-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/vicentefelipechile/vrchat-scanner/actions/workflows/ci.yml)
 
 ---
 
