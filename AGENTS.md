@@ -173,7 +173,10 @@ Input (path or bytes)
    ▼ Stage 6 — apply_context_reductions()
    │   Reduce points based on AnalysisContext (VRChat SDK, Editor folder, managed DLL)
    ▼ Stage 6 (cont.) — compute_score()
-   │   Sum points → RiskLevel (Clean/Low/Medium/High/Critical)
+   │   Sum points → score-band RiskLevel (Clean/Low/Medium/High/Critical)
+   │   Severity floor: if any finding is Severity::Critical → level ≥ High
+   │                   if two or more Critical findings     → level = Critical
+   │   Final level = max(score_band_level, severity_floor)
    ▼ Stage 7 — ScanReport::build()
    └── JSON (to_json) or CLI (print_report) or TXT (render_batch_txt / render_single_txt)
 ```
@@ -283,7 +286,12 @@ Input (path or bytes)
 
 ### `scoring`
 
-- `compute_score(findings)` → `(u32, RiskLevel)` — sums `finding.points`.
+- `compute_score(findings)` → `(u32, RiskLevel)` — sums `finding.points` to get a score-band
+  level, then applies a **severity floor**: if any finding is `Severity::Critical` the level is
+  at least `High`; two or more `Critical` findings escalate the level to `Critical`. The final
+  level is `max(score_band_level, severity_floor)`, implemented via `level_max()` / `level_ord()`
+  helpers in `scorer.rs`. This prevents a single forbidden file (e.g. a `.exe`, 90 pts) from
+  being reported as Medium when the total score is low.
 - `apply_context_reductions(findings: &mut [Finding], context)` — mutates `finding.points`
   in-place based on context. Takes a slice, not a `Vec`, to avoid unnecessary ownership.
 - `AnalysisContext` — four flags:
@@ -334,6 +342,34 @@ Input (path or bytes)
   If the location matches but the hash mismatches (or is not yet registered), returns `Modified` (runs obfuscation
   checks only and appends extra context).
 
+### `sanitize`
+
+- `run_sanitize(input, output, min_severity, dry_run)` — full sanitization pipeline. Calls
+  `run_scan_full` once, applies the decision matrix below per entry, then rebuilds the
+  `.unitypackage` via `rebuilder::rebuild_unitypackage`. The original file is never modified.
+- `script_neutralizer::neutralize_script(source, lines)` — comments out specific 1-indexed
+  lines in a C# source string: `/* SANITIZED */ // <original line>`.
+- `rebuilder::rebuild_unitypackage(data, guids_to_remove, patches)` — rewrites the TAR+gzip
+  archive, skipping removed GUIDs and substituting patched asset bytes.
+
+**Decision matrix** (applied per `PackageEntry`, in order):
+
+| Asset type | Condition | Action |
+|---|---|---|
+| `.cs` Script | any finding >= `min_severity` with line numbers | Comment out matched lines |
+| `.cs` Script | any finding >= `min_severity` without line numbers | Remove GUID from TAR |
+| `.dll` binary | any finding >= `min_severity` | Remove GUID from TAR |
+| `Other` with forbidden extension (`.exe`, `.bat`, `.ps1`, …) | any finding >= `min_severity` | Remove GUID from TAR |
+| Texture / Audio | `POLYGLOT_FILE` or `MAGIC_MISMATCH` + loader script present | Remove GUID from TAR |
+| Texture / Audio | `POLYGLOT_FILE` or `MAGIC_MISMATCH`, no loader script | Skip (inert payload) |
+| Texture / Audio | only entropy finding | Always keep |
+| Prefab / ScriptableObject | `PREFAB_INLINE_B64` >= `min_severity` | Remove GUID from TAR |
+| Package-level findings | `EXCESSIVE_DLLS`, `CS_NO_META`, `DLL_MANY_DEPENDENTS` | Ignore (no specific file to act on) |
+| Everything else | any findings | Keep |
+
+The `AssetType::Other` branch checks `crate::config::FORBIDDEN_EXTENSIONS` — only extensions
+on that list are removed. Unknown extensions fall through to "keep".
+
 ---
 
 ## 5. Code Conventions
@@ -374,13 +410,17 @@ The execution order is fixed and **must not be changed**:
 4. For each file in targets:
    a. print_file_header()           ← visual separator [N/Total] (skipped for single file)
    b. run_scan_command()            → (RiskLevel, Vec<Finding>)
-   c. prompt_sanitize()             ← shown only for .unitypackage with High/Critical level; default Y
-   d. run_sanitize_command()        ← only if user answers Y (or Enter)
+   c. push BatchResult { findings, level, sanitized: false }
+      ← NO sanitize prompt here; findings are accumulated for the batch
 5. print_batch_summary(&batch, batch_start.elapsed().as_millis(), caps)
                                     ← shown only when targets.len() > 1; includes total elapsed time
-6. prompt_save_report()             ← always shown; default Y (Enter = save)
-7. wait_for_keypress()              ← keeps the window open
-8. process::exit(2)                 ← only if any file was Critical, AFTER all of the above
+6. prompt_sanitize_batch()          ← shown ONCE after summary, only if any .unitypackage has
+                                       High/Critical level OR any Critical-severity finding;
+                                       lists all candidate files with their actions; default Y
+   run_sanitize_command()           ← runs for ALL candidates if user answers Y (or Enter)
+7. prompt_save_report()             ← always shown; default Y (Enter = save)
+8. wait_for_keypress()              ← keeps the window open
+9. process::exit(2)                 ← only if any file was Critical, AFTER all of the above
 ```
 
 > **Critical rule:** `process::exit(2)` must never be called inside `run_scan_command`
@@ -388,13 +428,13 @@ The execution order is fixed and **must not be changed**:
 
 ### `main.rs` — interactive prompt defaults
 
-**All three interactive prompts default to Y (confirm).** Enter without typing anything confirms.
+**All interactive prompts default to Y (confirm).** Enter without typing anything confirms.
 The user must explicitly type `N` to cancel.
 
 | Prompt | Default | Rationale |
 |---|---|---|
 | `prompt_continue_large_batch` | Y | Most users who drop a folder want to scan everything |
-| `prompt_sanitize` | Y | When threats are detected, sanitizing is the safe action |
+| `prompt_sanitize_batch` | Y | When threats are detected, sanitizing is the safe action |
 | `prompt_save_report` | Y | Users generally want a record of the scan |
 
 Implementation pattern for every prompt:
@@ -436,21 +476,21 @@ Used in: `collect_unitypackages()` and `collect_from_dir()`.
 struct BatchResult {
     path: PathBuf,
     level: scoring::RiskLevel,
-    findings: Vec<report::Finding>,  // kept for potential future use (e.g. aggregate dedup)
+    findings: Vec<report::Finding>,  // retained after scan; used by prompt_sanitize_batch()
+                                     // to build the action list without re-scanning
     sanitized: bool,
     report: Option<report::ScanReport>, // None during main pass; reserved for future optimization
                                         // that avoids the re-scan in build_txt_from_batch()
 }
 ```
 
-`findings` and `report` are currently unused at runtime but are intentionally kept:
-- `findings` — placeholder for future aggregate analysis across the batch (e.g. cross-package dedup).
-- `report` — if populated, `build_txt_from_batch` could skip re-scanning each file to build the
-  txt output. Currently it always re-scans because storing full `ScanReport` structs for large
-  batches would double memory usage.
+`findings` is actively used by `prompt_sanitize_batch` to build the per-file action list after
+the batch scan completes — do not remove it or make it optional.
+`report` remains reserved for a future optimization where `build_txt_from_batch` could skip
+re-scanning each file; currently it always re-scans to avoid doubling memory for large batches.
 
-> Do not remove these fields. Remove the `#[allow(dead_code)]` comment and populate them
-> when implementing the optimization.
+> When implementing the re-scan optimization: populate `report` during the main scan loop,
+> remove the `#[allow(dead_code)]` comment, and update `build_txt_from_batch` accordingly.
 
 ### `main.rs` — `print_batch_summary()` signature
 
@@ -472,20 +512,26 @@ The summary displays it formatted via the same `format_duration()` logic used in
 
 ### `main.rs` — sanitize prompt helpers
 
-Three private functions support the interactive sanitize prompt:
+Four private functions support the interactive sanitize prompt:
 
 | Function | Signature | Purpose |
 |---|---|---|
 | `finding_api_label` | `(FindingId) -> &'static str` | Maps a FindingId to a short API name (e.g. `"Process.Start()"`) |
 | `build_action_list` | `(&[Finding]) -> Vec<String>` | Builds a sorted per-asset action list from High/Critical findings |
-| `prompt_sanitize` | `(&Path, &[Finding], TermCaps) -> bool` | Renders the prompt; Enter or `Y` = confirm, `N` = cancel |
+| `prompt_sanitize` | `(&Path, &[Finding], TermCaps) -> bool` | Single-file wrapper around `prompt_sanitize_batch`; used only by the `sanitize` subcommand |
+| `prompt_sanitize_batch` | `(&[(&Path, &[Finding])], TermCaps) -> bool` | Renders one consolidated prompt for all High/Critical candidates after the full batch scan completes; Enter or `Y` = confirm all, `N` = cancel all |
 
 `build_action_list` groups findings by `location`:
 - `.cs` files → `"comment out <api1>, <api2>"`
-- `.dll` / `.so` / other binary assets → `"will be removed from the package"`
+- `.dll` / `.exe` / other binary assets → `"will be removed from the package"`
 
 The prompt uses `═══` separator lines (Unicode) or `===` (ASCII fallback) — **never box-drawing
 characters**. The output filename is computed from the actual input path, not a template string.
+
+`prompt_sanitize_batch` is the **only** correct entry point for the drag-and-drop flow.
+`prompt_sanitize` (single-file) is only valid in two contexts:
+- The `sanitize` subcommand (always a single explicit file).
+- Drag-and-drop of a **single** file (delegates directly to `prompt_sanitize_batch`).
 
 ### `report/cli_reporter.rs` — finding output format
 
@@ -824,6 +870,24 @@ modules.
 > **Critical rule:** Context reductions never affect findings with `Critical` severity.
 > They only modify `finding.points`; they never change `finding.severity`.
 
+### Severity floor in `compute_score`
+
+`compute_score` applies a severity-based floor **after** summing points, so that a single
+high-severity file (e.g. a `.exe` inside a package, 90 pts) is never buried in a lower risk
+band due to a low total score:
+
+| Critical-severity findings | Minimum level |
+|---|---|
+| 0 | *(score band only)* |
+| 1 | `High` |
+| 2+ | `Critical` |
+
+The final level is `max(score_band_level, severity_floor)`, implemented via `level_max()` and
+`level_ord()` helpers in `scorer.rs`.
+
+> **Invariant:** the floor is computed on `Severity::Critical` findings only — `High`-severity
+> findings do not trigger it. The floor never lowers the level, only raises it.
+
 ### `has_loader_script` detection
 
 A package is considered to have a loader script if any of these `FindingId` variants are present
@@ -1051,10 +1115,38 @@ Use `PTS_*` constants from `src/config.rs`.
 ### ❌ Re-scanning the file a second time in the sanitize prompt
 
 The sanitize prompt must use the findings already available from the first scan pass.
+`BatchResult.findings` is populated during the scan loop for exactly this purpose — pass it
+directly to `prompt_sanitize_batch`, never call `run_scan` again inside the prompt.
 
-### ❌ Using box-drawing characters in interactive prompts
+### ❌ Showing the sanitize prompt per-file during a batch scan
 
-Use `═══` separators (Unicode) or `===` (ASCII fallback). Never use `┌┐└┘│─` in prompts.
+The sanitize prompt must **never** appear inside the per-file scan loop when processing
+multiple files. It interrupts the batch mid-way and forces the user to answer once per file.
+The correct pattern is:
+
+1. Accumulate `BatchResult` entries with `sanitized: false` during the scan loop.
+2. After `print_batch_summary`, collect all candidates (`.unitypackage` with `High | Critical`
+   level OR any `Severity::Critical` finding).
+3. Call `prompt_sanitize_batch` **once** with all candidates.
+4. If the user confirms, run `run_sanitize_command` for each candidate.
+
+`prompt_sanitize` (single-file) is only valid in two contexts:
+- The `sanitize` subcommand (always a single explicit file).
+- Drag-and-drop of a **single** file (delegates directly to `prompt_sanitize_batch`).
+
+### ❌ Not removing `AssetType::Other` with forbidden extensions during sanitization
+
+Files with `AssetType::Other(ext)` where `ext` is in `FORBIDDEN_EXTENSIONS` (`.exe`, `.bat`,
+`.ps1`, etc.) must be removed from the TAR just like DLLs. The `_ => kept_entries += 1`
+fallback must never apply to forbidden extensions — always check `FORBIDDEN_EXTENSIONS` first
+in the `Other` branch.
+
+### ❌ Using box-drawing characters (`┌┐└┘│`) in interactive prompts or sanitize reports
+
+Interactive prompts (`prompt_sanitize_batch`, `prompt_continue_large_batch`,
+`prompt_save_report`) and `sanitize_reporter` must use `═══` / `───` separators (Unicode) or
+`===` / `---` (ASCII fallback). Box-drawing characters (`┌┐└┘│─`) are only permitted in
+`cli_reporter` read-only output.
 
 ### ❌ Adding ANSI escape codes to `txt_reporter`
 
@@ -1199,8 +1291,8 @@ cargo run -- sanitize path/to/file.unitypackage --min-severity medium
 # Drag-and-drop (single file) — triggers interactive pause + sanitize prompt (default Y)
 cargo run -- path/to/file.unitypackage
 
-# Drag-and-drop (multiple files) — scans each, per-file sanitize prompt (default Y),
-# batch summary with total elapsed time, offer to save txt report (default Y)
+# Drag-and-drop (multiple files) — scans each, accumulates results, shows consolidated
+# sanitize prompt ONCE after batch summary, offer to save txt report (default Y)
 cargo run -- file1.unitypackage file2.unitypackage file3.unitypackage
 
 # Drag-and-drop (folder) — recursively finds all .unitypackage files, same flow as above
