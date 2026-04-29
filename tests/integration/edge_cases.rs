@@ -177,11 +177,11 @@ public class CodeGen {
 fn finding_with_context_stores_context() {
     use vrcstorage_scanner::report::{Finding, Severity};
 
-    let f = Finding::new(FindingId::PeHighEntropySection, Severity::High, 50, "path/to/file", "Some detail")
+    let f = Finding::new(FindingId::PeHighEntropySection, Severity::High, 55, "path/to/file", "Some detail")
         .with_context("extra info here");
 
     assert_eq!(f.id, FindingId::PeHighEntropySection);
-    assert_eq!(f.points, 50);
+    assert_eq!(f.points, 55);
     assert_eq!(f.context.as_deref(), Some("extra info here"));
 }
 

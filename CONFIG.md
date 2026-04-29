@@ -21,7 +21,7 @@ You do **not** need to understand Rust or the inner workings of the scanner to m
 Every package scanned receives a **total risk score** (a sum of all finding points). That number is compared against the maximums defined here to assign a final level.
 
 * `SCORE_CLEAN_MAX` (Default: 30) — The package is essentially benign and can be auto-published.
-* `SCORE_LOW_MAX` (Default: 60) — Some slightly unusual behavior, but usually safe. Published with a note.
+* `SCORE_LOW_MAX` (Default: 75) — Some slightly unusual behavior, but usually safe. Published with a note.
 * `SCORE_MEDIUM_MAX` (Default: 100) — Noticeable suspicious behavior. Manual review is recommended.
 * `SCORE_HIGH_MAX` (Default: 150) — High risk. Package is retained pending mandatory review.
 * **Critical** (> 150) — Rejected outright.

@@ -39,15 +39,15 @@ fn score_31_is_low() {
 }
 
 #[test]
-fn score_60_is_low_boundary() {
-    let findings = vec![finding(FindingId::CsNoMeta, Severity::Low, 60)];
+fn score_75_is_low_boundary() {
+    let findings = vec![finding(FindingId::CsNoMeta, Severity::Low, 75)];
     let (_, level) = compute_score(&findings);
     assert_eq!(level, RiskLevel::Low);
 }
 
 #[test]
-fn score_61_is_medium() {
-    let findings = vec![finding(FindingId::CsUnsafeBlock, Severity::Medium, 61)];
+fn score_76_is_medium() {
+    let findings = vec![finding(FindingId::CsUnsafeBlock, Severity::Medium, 76)];
     let (_, level) = compute_score(&findings);
     assert_eq!(level, RiskLevel::Medium);
 }
@@ -84,11 +84,11 @@ fn score_151_is_critical() {
 fn score_accumulates_all_findings() {
     let findings = vec![
         finding(FindingId::CsNoMeta, Severity::Low, 10),
-        finding(FindingId::CsUnsafeBlock, Severity::Medium, 25),
+        finding(FindingId::CsUnsafeBlock, Severity::Medium, 30),
         finding(FindingId::PeHighEntropySection, Severity::High, 55),
     ];
     let (score, _) = compute_score(&findings);
-    assert_eq!(score, 90);
+    assert_eq!(score, 95);
 }
 
 // ─── Context reduction tests ──────────────────

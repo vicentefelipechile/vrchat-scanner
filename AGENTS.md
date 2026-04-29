@@ -854,14 +854,14 @@ modules.
 | HTTP/WebClient in C# | `CS_HTTP_CLIENT` | Medium | `PTS_CS_HTTP_CLIENT` = 30 |
 | `unsafe` code in C# | `CS_UNSAFE_BLOCK` | Medium | `PTS_CS_UNSAFE_BLOCK` = 30 |
 | Registry APIs (IAT) | `DLL_IMPORT_REGISTRY` | Medium | `PTS_DLL_IMPORT_REGISTRY` = 25 |
-| External `.meta` reference | `META_EXTERNAL_REF` | Medium | `PTS_META_EXTERNAL_REF` = 5 |
+| External `.meta` reference | `META_EXTERNAL_REF` | Medium | `PTS_META_EXTERNAL_REF` = 4 |
 | Long Base64 blob | `CS_BASE64_HIGH_RATIO` | Medium | `PTS_CS_BASE64_HIGH_RATIO` = 25 |
 | Marshal ops in C# | `CS_MARSHAL_OPS` | Medium | `PTS_CS_MARSHAL_OPS` = 25 |
 | Magic bytes mismatch (non-image) | `MAGIC_MISMATCH` | Medium | `PTS_MAGIC_MISMATCH` = 25 |
 | XOR decryption pattern | `CS_XOR_DECRYPTION` | Medium | `PTS_CS_XOR_DECRYPTION` = 20 |
 | PE section entropy 6.8–7.2 | `PE_HIGH_ENTROPY_SECTION` | Medium | `PTS_PE_HIGH_ENTROPY_MEDIUM` = 20 |
 | Future timestamp in `.meta` | `META_FUTURE_TIMESTAMP` | Medium | `PTS_META_FUTURE_TIMESTAMP` = 20 |
-| High entropy in texture | `TEXTURE_HIGH_ENTROPY` | Medium | `PTS_TEXTURE_HIGH_ENTROPY` = 20 |
+| High entropy in texture | `TEXTURE_HIGH_ENTROPY` | Medium | `PTS_TEXTURE_HIGH_ENTROPY` = 8 |
 | PE unnamed section | `PE_UNNAMED_SECTION` | Medium | `PTS_PE_UNNAMED_SECTION` = 20 |
 | PE inflated section | `PE_INFLATED_SECTION` | Medium | `PTS_PE_INFLATED_SECTION` = 20 |
 | LoadLibrary import | `DLL_IMPORT_LOADLIBRARY` | Low | `PTS_DLL_IMPORT_LOADLIBRARY` = 25 |
@@ -878,7 +878,7 @@ modules.
 | Suspicious path in DLL strings | `DLL_STRINGS_SUSPICIOUS_PATH` | Low | `PTS_DLL_STRINGS_SUSPICIOUS_PATH` = 12 |
 | Sysinfo import (GetComputerName) | `DLL_IMPORT_SYSINFO` | Low | `PTS_DLL_IMPORT_SYSINFO` = 8 |
 | Audio unusual entropy | `AUDIO_UNUSUAL_ENTROPY` | Low | `PTS_AUDIO_UNUSUAL_ENTROPY` = 8 |
-| Inline Base64 in prefab | `PREFAB_INLINE_B64` | Low | `PTS_PREFAB_INLINE_B64` = 3 |
+| Inline Base64 in prefab | `PREFAB_INLINE_B64` | Low | `PTS_PREFAB_INLINE_B64` = 1 |
 | C# script without `.meta` | `CS_NO_META` | Low | `PTS_CS_NO_META` = 10 |
 | PE parse error | `PE_PARSE_ERROR` | Low | `PTS_PE_PARSE_ERROR` = 5 |
 | Prefab excessive GUIDs | `PREFAB_EXCESSIVE_GUIDS` | Low | `PTS_PREFAB_EXCESSIVE_GUIDS` = 5 |
@@ -890,7 +890,7 @@ modules.
 | Score | Level | Action |
 |---|---|---|
 | 0 – `SCORE_CLEAN_MAX` (30) | `Clean` | Auto-publish |
-| 31 – `SCORE_LOW_MAX` (60) | `Low` | Publish with audit note |
+| 31 – `SCORE_LOW_MAX` (75) | `Low` | Publish with audit note |
 | 61 – `SCORE_MEDIUM_MAX` (100) | `Medium` | Manual review recommended |
 | 101 – `SCORE_HIGH_MAX` (150) | `High` | Retain — mandatory manual review |
 | 151+ | `Critical` | Reject; CLI exit code 2 |
