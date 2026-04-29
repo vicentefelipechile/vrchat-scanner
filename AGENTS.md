@@ -99,13 +99,14 @@ vrcstorage-scanner/
 │   │       └── dependency_graph.rs ← FindingId::DllManyDependents: flags DLLs with > 5 .meta references
 │   │
 │   ├── sanitize/               ← `sanitize` subcommand implementation
-│   │   └── mod.rs              ← run_sanitize(): applies decision matrix, rewrites .unitypackage
+│   │   ├── mod.rs              ← run_sanitize(): applies decision matrix, rewrites .unitypackage
+│   │   ├── rebuilder.rs        ← rebuild_unitypackage(): rewrites TAR+gzip archive
+│   │   └── script_neutralizer.rs ← neutralize_script(): comments out dangerous C# lines
 │   │
 │   ├── scoring/
 │   │   ├── mod.rs              ← re-exports compute_score, apply_context_reductions, RiskLevel
 │   │   ├── scorer.rs           ← compute_score() + classification (Clean/Low/Medium/High/Critical)
-│   │   ├── context.rs          ← apply_context_reductions() + AnalysisContext
-│   │   └── rules.rs            ← rule table (reference only; not used at runtime)
+│   │   └── context.rs          ← apply_context_reductions() + AnalysisContext
 │   │
 │   ├── report/
 │   │   ├── mod.rs
@@ -128,6 +129,7 @@ vrcstorage-scanner/
 └── whitelist.rs            ← check(location, data, source) → WhitelistVerdict
 │
 ├── tests/
+│   ├── fixtures/               ← test data (clean/, malicious/, edge_cases/)
 │   ├── integration.rs          ← entry point (includes integration/ modules)
 │   └── integration/
 │       ├── clean_package.rs
@@ -787,7 +789,7 @@ modules.
 
 | Signal | ID | Sev | Pts constant |
 |---|---|---|---|
-| Executable inside package | `FORBIDDEN_EXTENSION` | Critical | `PTS_FORBIDDEN_EXTENSION` = 90 |
+| Executable inside package | `FORBIDDEN_EXTENSION` | Critical | `PTS_FORBIDDEN_EXTENSION` = 250 |
 | Path traversal (`../`) | `PATH_TRAVERSAL` | Critical | `PTS_PATH_TRAVERSAL` = 85 |
 | `Assembly.Load(byte[])` in C# | `CS_ASSEMBLY_LOAD_BYTES` | Critical | `PTS_CS_ASSEMBLY_LOAD_BYTES` = 80 |
 | CreateProcess / ShellExecute (IAT) | `DLL_IMPORT_CREATEPROCESS` | Critical | `PTS_DLL_IMPORT_CREATEPROCESS` = 80 |
@@ -815,7 +817,7 @@ modules.
 | HTTP/WebClient in C# | `CS_HTTP_CLIENT` | Medium | `PTS_CS_HTTP_CLIENT` = 30 |
 | `unsafe` code in C# | `CS_UNSAFE_BLOCK` | Medium | `PTS_CS_UNSAFE_BLOCK` = 30 |
 | Registry APIs (IAT) | `DLL_IMPORT_REGISTRY` | Medium | `PTS_DLL_IMPORT_REGISTRY` = 25 |
-| External `.meta` reference | `META_EXTERNAL_REF` | Medium | `PTS_META_EXTERNAL_REF` = 25 |
+| External `.meta` reference | `META_EXTERNAL_REF` | Medium | `PTS_META_EXTERNAL_REF` = 5 |
 | Long Base64 blob | `CS_BASE64_HIGH_RATIO` | Medium | `PTS_CS_BASE64_HIGH_RATIO` = 25 |
 | Marshal ops in C# | `CS_MARSHAL_OPS` | Medium | `PTS_CS_MARSHAL_OPS` = 25 |
 | Magic bytes mismatch (non-image) | `MAGIC_MISMATCH` | Medium | `PTS_MAGIC_MISMATCH` = 25 |
@@ -834,10 +836,12 @@ modules.
 | More than 10 DLLs | `EXCESSIVE_DLLS` | Low | `PTS_EXCESSIVE_DLLS` = 15 |
 | Obfuscated identifiers | `CS_OBFUSCATED_IDENTIFIERS` | Low | `PTS_CS_OBFUSCATED_IDENTIFIERS` = 15 |
 | Environment variable access (C#) | `CS_ENVIRONMENT_ACCESS` | Medium | `PTS_CS_ENVIRONMENT_ACCESS` = 15 |
+| URL to unknown domain in DLL strings | `CS_URL_UNKNOWN_DOMAIN` | High | `PTS_DLL_URL_UNKNOWN_DOMAIN` = 50 |
+| Hardcoded IP in DLL strings | `CS_IP_HARDCODED` | High | `PTS_DLL_IP_HARDCODED` = 50 |
 | Suspicious path in DLL strings | `DLL_STRINGS_SUSPICIOUS_PATH` | Low | `PTS_DLL_STRINGS_SUSPICIOUS_PATH` = 12 |
 | Sysinfo import (GetComputerName) | `DLL_IMPORT_SYSINFO` | Low | `PTS_DLL_IMPORT_SYSINFO` = 8 |
 | Audio unusual entropy | `AUDIO_UNUSUAL_ENTROPY` | Low | `PTS_AUDIO_UNUSUAL_ENTROPY` = 8 |
-| Inline Base64 in prefab | `PREFAB_INLINE_B64` | Low | `PTS_PREFAB_INLINE_B64` = 8 |
+| Inline Base64 in prefab | `PREFAB_INLINE_B64` | Low | `PTS_PREFAB_INLINE_B64` = 3 |
 | C# script without `.meta` | `CS_NO_META` | Low | `PTS_CS_NO_META` = 10 |
 | PE parse error | `PE_PARSE_ERROR` | Low | `PTS_PE_PARSE_ERROR` = 5 |
 | Prefab excessive GUIDs | `PREFAB_EXCESSIVE_GUIDS` | Low | `PTS_PREFAB_EXCESSIVE_GUIDS` = 5 |
@@ -853,6 +857,21 @@ modules.
 | 61 – `SCORE_MEDIUM_MAX` (100) | `Medium` | Manual review recommended |
 | 101 – `SCORE_HIGH_MAX` (150) | `High` | Retain — mandatory manual review |
 | 151+ | `Critical` | Reject; CLI exit code 2 |
+
+### Additional config constants (non-PTS)
+
+These constants control detection thresholds, ratios, and minimum sizes. They are not per-finding point values but still affect which findings fire.
+
+| Constant | Value | Purpose |
+|---|---|---|
+| `PE_INFLATED_RATIO` | 4 | Section virtual size must be ≥ raw_size × this to flag `PeInflatedSection` |
+| `DLL_MIN_STRING_LEN` | 6 | Minimum ASCII string length extracted from DLLs for analysis |
+| `OBFUSC_BASE64_RATIO` | 0.15 | Base64 chars / total chars ratio to flag `CsBase64HighRatio` |
+| `OBFUSC_BASE64_LONG_LEN` | 200 | Individual Base64 string length threshold for `CsBase64HighRatio` |
+| `OBFUSC_MIN_TOKENS` | 50 | Minimum tokens before short-identifier check runs |
+| `OBFUSC_SHORT_IDENT_RATIO` | 0.4 | Max fraction of 1-2 char identifiers to flag `CsObfuscatedIdentifiers` |
+| `THRESHOLD_PREFAB_MANY_SCRIPTS` | 20 | Prefabs with more `m_Script:` entries flag `PrefabManyScripts` |
+| `THRESHOLD_PREFAB_EXCESSIVE_GUIDS` | 100 | Binary prefabs with more GUID refs flag `PrefabExcessiveGuids` |
 
 ---
 
@@ -948,7 +967,10 @@ Current patterns:
 
 ```
 vrchat.com, unity3d.com, unity.com, microsoft.com, github.com,
-githubusercontent.com, nuget.org, visualstudio.com, windowsupdate.com
+githubusercontent.com, nuget.org, visualstudio.com, windowsupdate.com,
+thryrallo.de, stackexchange.com, youtube.com, poiyomi.com,
+translate.googleapis.com, cloud.google.com, gumroad.com, ko-fi.com,
+linktr.ee, twitter.com, x.com, discord.gg, patreon.com
 ```
 
 Use `is_safe_domain(url: &str) -> bool` (from `utils::patterns`) to check URLs against the list.
