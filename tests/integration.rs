@@ -21,3 +21,6 @@ mod scoring_pipeline;
 
 #[path = "integration/edge_cases.rs"]
 mod edge_cases;
+
+#[path = "integration/export.rs"]
+mod export;

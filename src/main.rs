@@ -8,6 +8,7 @@ mod scoring;
 mod server;
 mod terminal;
 mod utils;
+mod export;
 mod whitelist;
 
 use clap::{Parser, Subcommand};
@@ -85,6 +86,25 @@ enum Command {
         json: bool,
     },
 
+    /// Export a .unitypackage to a readable folder or ZIP file
+    Export {
+        /// Path to the .unitypackage to export
+        #[arg(value_name = "FILE")]
+        path: PathBuf,
+
+        /// Output format: "folder" (default) or "zip"
+        #[arg(short, long, default_value = "folder")]
+        output: String,
+
+        /// Output directory or file [default: <input>-exported/ next to input]
+        #[arg(short = 'd', long)]
+        out_dir: Option<PathBuf>,
+
+        /// Omit .meta files from the export
+        #[arg(short = 'm', long)]
+        skip_meta: bool,
+    },
+
     /// Start HTTP server mode (for Cloudflare Containers)
     Serve {
         /// Port to listen on
@@ -156,6 +176,21 @@ async fn main() {
             print_banner(caps);
             let out = output.unwrap_or_else(|| default_sanitize_output(&path));
             run_sanitize_command(&path, &out, &min_severity, dry_run, json, caps);
+        }
+
+        // vrcstorage-scanner export <FILE> [--output folder|zip] [--out-dir <DIR>] [--skip-meta]
+        (Some(Command::Export { path, output, out_dir, skip_meta }), _, _) => {
+            print_banner(caps);
+            let out_lower = output.to_lowercase();
+            if out_lower != "folder" && out_lower != "zip" {
+                eprintln!(
+                    "{} Invalid output type '{}'. Use 'folder' or 'zip'.",
+                    "ERROR:".red().bold(),
+                    output
+                );
+                std::process::exit(1);
+            }
+            run_export_command(&path, &out_lower, out_dir.as_deref(), skip_meta, caps);
         }
 
         // vrcstorage-scanner serve [--port N]
@@ -878,6 +913,149 @@ fn run_sanitize_command(
 fn default_sanitize_output(path: &std::path::Path) -> PathBuf {
     let stem = path.file_stem().unwrap_or_default().to_string_lossy();
     path.with_file_name(format!("{stem}-sanitized.unitypackage"))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Export command
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn run_export_command(
+    path: &std::path::Path,
+    output_type: &str,
+    out_dir: Option<&std::path::Path>,
+    skip_meta: bool,
+    caps: TermCaps,
+) {
+    if !path.exists() {
+        eprintln!("{} File not found: {}", "ERROR:".red().bold(), path.display());
+        std::process::exit(1);
+    }
+
+    let spinner = {
+        let pb = indicatif::ProgressBar::new_spinner();
+        pb.set_style(
+            indicatif::ProgressStyle::with_template(if caps.unicode {
+                "  {spinner:.cyan} {msg}"
+            } else {
+                "  {msg}..."
+            })
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        pb.enable_steady_tick(std::time::Duration::from_millis(80));
+        pb.set_message(format!("Exporting {}", path.display()));
+        pb
+    };
+
+    let result = export::run_export(path, output_type, out_dir, skip_meta);
+    spinner.finish_and_clear();
+
+    match result {
+        Ok(report) => print_export_report(&report, caps),
+        Err(e) => {
+            eprintln!("{} {}", "ERROR:".red().bold(), e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn print_export_report(report: &export::ExportReport, caps: TermCaps) {
+    let sep = if caps.unicode {
+        "═".repeat(64)
+    } else {
+        "=".repeat(64)
+    };
+    let thin = if caps.unicode {
+        "─".repeat(64)
+    } else {
+        "-".repeat(64)
+    };
+    let check = if caps.unicode { "✓" } else { "[OK]" };
+
+    // ── Header ──────────────────────────────────────────────────────────
+    println!("\n  {sep}");
+    if caps.unicode {
+        println!("{}", "   EXPORT REPORT".bold().cyan());
+    } else {
+        println!("   EXPORT REPORT");
+    }
+    println!("  {sep}");
+
+    // ── Input ───────────────────────────────────────────────────────────
+    if caps.unicode {
+        println!("\n{}", "  INPUT".bold().white());
+    } else {
+        println!("\n  INPUT");
+    }
+    println!("  {thin}");
+    println!("    {}", report.input_path.display());
+
+    // ── Output ──────────────────────────────────────────────────────────
+    if caps.unicode {
+        println!("\n{}", "  OUTPUT".bold().white());
+    } else {
+        println!("\n  OUTPUT");
+    }
+    println!("  {thin}");
+    let output_type_str = match report.output_type {
+        export::ExportType::Folder => "folder",
+        export::ExportType::Zip => "zip",
+    };
+    if caps.unicode {
+        println!(
+            "    Path : {}",
+            report.output_path.display().to_string().bold()
+        );
+    } else {
+        println!("    Path : {}", report.output_path.display());
+    }
+    println!("    Type : {output_type_str}");
+
+    // ── Stats ───────────────────────────────────────────────────────────
+    if caps.unicode {
+        println!("\n{}", "  STATS".bold().white());
+    } else {
+        println!("\n  STATS");
+    }
+    println!("  {thin}");
+    println!("    Total entries  : {}", report.total_entries);
+    println!("    Assets         : {}", report.exported_assets);
+    println!("    .meta files    : {}", report.exported_meta);
+    if report.skip_meta {
+        if caps.unicode {
+            println!("    {} .meta export was disabled (--skip-meta)", "Note:".dimmed());
+        } else {
+            println!("    Note: .meta export was disabled (--skip-meta)");
+        }
+    }
+    if report.skipped_empty > 0 {
+        println!("    Skipped (empty): {}", report.skipped_empty);
+    }
+    if report.skipped_unsafe > 0 {
+        println!(
+            "    {} Skipped (unsafe path): {}",
+            "WARNING:".yellow().bold(),
+            report.skipped_unsafe
+        );
+    }
+    for w in &report.warnings {
+        println!("    {} {}", "WARNING:".yellow().bold(), w);
+    }
+
+    // ── Summary ─────────────────────────────────────────────────────────
+    println!("\n  {sep}");
+    let total = report.exported_assets + report.exported_meta;
+    if caps.unicode {
+        println!(
+            "  {} Successfully exported {} entries.",
+            check.green().bold(),
+            total
+        );
+    } else {
+        println!("  {check} Successfully exported {total} entries.");
+    }
+    println!("  {sep}");
+    println!();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

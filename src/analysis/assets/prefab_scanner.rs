@@ -65,7 +65,7 @@ fn analyze_yaml(content: &str, location: &str) -> Vec<Finding> {
         if script_count > THRESHOLD_PREFAB_MANY_SCRIPTS {
             findings.push(Finding::new(
                 FindingId::PrefabManyScripts,
-                Severity::Low,
+                Severity::Medium,
                 PTS_PREFAB_MANY_SCRIPTS,
                 location,
                 "Prefab references an unusually large number of scripts",

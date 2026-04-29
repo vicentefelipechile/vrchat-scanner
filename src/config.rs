@@ -306,7 +306,7 @@ pub const PTS_MAGIC_MISMATCH_IMAGE: u32 = 2;
 
 /// `TextureHighEntropy` — Texture entropy above `ENTROPY_TEXTURE_HIGH`.
 /// Only fires for uncompressed formats (PNG/JPEG/WebP are exempt).
-pub const PTS_TEXTURE_HIGH_ENTROPY: u32 = 20;
+pub const PTS_TEXTURE_HIGH_ENTROPY: u32 = 8;
 
 /// `AudioUnusualEntropy` — Audio entropy outside the expected range.
 pub const PTS_AUDIO_UNUSUAL_ENTROPY: u32 = 8;
@@ -320,7 +320,7 @@ pub const PTS_POLYGLOT_FILE: u32 = 70;
 // =============================================================================
 
 /// `MetaExternalRef` — .meta file references assets not included in the package.
-pub const PTS_META_EXTERNAL_REF: u32 = 5;
+pub const PTS_META_EXTERNAL_REF: u32 = 4;
 
 /// `MetaFutureTimestamp` — Creation timestamp in the .meta file is in the future.
 /// Possible tampering or crafting outside Unity.
@@ -331,7 +331,7 @@ pub const PTS_META_FUTURE_TIMESTAMP: u32 = 20;
 // =============================================================================
 
 /// `PrefabInlineB64` — Long inline Base64 field inside a YAML prefab.
-pub const PTS_PREFAB_INLINE_B64: u32 = 3;
+pub const PTS_PREFAB_INLINE_B64: u32 = 1;
 
 /// `PrefabExcessiveGuids` — Binary prefab with an abnormal number of GUID refs.
 pub const PTS_PREFAB_EXCESSIVE_GUIDS: u32 = 5;
@@ -675,5 +675,82 @@ pub static WHITELIST: &[WhitelistEntry] = &[
             "64251b638c73a5f80ccebf2f07b8d22c9662067d8f6d0d60921423f64f35e81d",
         ],
         expected_line_range: Some((323, 324)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - TPS Setup Wizard",
+        path_patterns: &["_PoiyomiShaders", "TPS", "Script", "Editor", "TPS_SetupWizard"],
+        sha256_hashes: &[
+            "b6705ff4ce73ebc7ea7cbf2617bf963a53a42378e1526565bdab6864a1fe58cf",
+            "4082948ec50c1947dd29ebe5badbb8ce2d6e733255385a346bed9c8ccf16766c",
+        ],
+        expected_line_range: Some((2410, 2424)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - ModularShadersForThryEditor",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "poi-tools", "Editor", "ModularShaderStuff", "ModularShadersForThryEditor"],
+        sha256_hashes: &[
+            "cc2d1c7e7657985edc11d434ba5bb3b798cd8c98cde117346d6c8d3c6757b7de",
+            "efedab74cab5c16906bdb357a581657d70629957b2bb411ec00f467db9b5df86",
+        ],
+        expected_line_range: Some((272, 273)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - ShaderGenerator",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "Editor", "ModularShaderSystem", "ShaderGenerator"],
+        sha256_hashes: &[
+            "043f53a70fdbea1edc33a119e77dc9837f7eb020b7593782609cd07245ef47d1",
+            "37af7eedc808815583d011f5d966629b9dc4ee08686c514cd50fc55b50bcb95e",
+        ],
+        expected_line_range: Some((1424, 1425)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - Migrator",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "Editor", "ModularShaderSystem", "Editors", "Windows", "Migrator"],
+        sha256_hashes: &[
+            "544365d6b36a49dddd86099870aa243eb537824f5fc76a471c5859278321c7c5",
+        ],
+        expected_line_range: Some((820, 821)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - TPS Helper",
+        path_patterns: &["_PoiyomiShaders", "TPS", "Scripts", "Editor", "Helper"],
+        sha256_hashes: &[
+            "aeb59bc9b82269503a384a3b4d8379f7fd967c9e5d3b880a61f484643a0c9d20",
+            "f1474f173d15a2b1badd2e2ff9ab2e7939da971d92499dec12c8955e821f9698",
+        ],
+        expected_line_range: Some((181, 182)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - TemplateCollectionAsset",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "Editor", "ModularShaderSystem", "Scriptables", "TemplateCollectionAsset"],
+        sha256_hashes: &[
+            "f2974659e66ec768d91c093e1f59ffcb43f3e591d231e01f628fef6d5335291e",
+        ],
+        expected_line_range: Some((47, 48)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - TexturePacker",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "ThryEditor", "TexturePacker", "TexturePacker"],
+        sha256_hashes: &[
+            "4c3236f2af15a1982cee3b3f7dbe3ad72d78472eb875d06dc1cdfd03644a5619",
+        ],
+        expected_line_range: Some((1499, 1500)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - HelperWeb",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "ThryEditor", "Editor", "HelperWeb"],
+        sha256_hashes: &[
+            "6a138cf00c903d91dbf0e33e4f801573dd8d881f0790ec98859b961d57dca312",
+        ],
+        expected_line_range: Some((284, 285)),
+    },
+    WhitelistEntry {
+        name: "Poiyomi Toon - TemplateAsset",
+        path_patterns: &["_PoiyomiShaders", "Scripts", "Editor", "ModularShaderSystem", "Scriptables", "TemplateAsset"],
+        sha256_hashes: &[
+            "ef7c523a100bf62c6a993b5da84942547edd86aaa6097aefb070cbc330cd980d",
+            "82171e2b1bb7ab3dc7f3eced289e45dd31d746bb870f569ed12429644acd1641",
+        ],
+        expected_line_range: Some((57, 58)),
     },
 ];

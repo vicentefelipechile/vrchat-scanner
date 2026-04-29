@@ -38,6 +38,7 @@ executing the content.
 | CLI JSON | `vrcstorage-scanner scan <FILE> --output json` | CI / script integration |
 | CLI TXT | `vrcstorage-scanner scan <FILE> --output txt -f report.txt` | Plain-text report to file |
 | CLI sanitize | `vrcstorage-scanner sanitize <FILE>` | Remove/neutralize malicious assets |
+| CLI export | `vrcstorage-scanner export <FILE>` | Extract to folder or ZIP |
 | Drag-and-drop (single) | `vrcstorage-scanner <FILE>` | Non-technical users |
 | Drag-and-drop (multi) | `vrcstorage-scanner <FILE1> <FILE2> …` | Multiple files dropped at once |
 | Drag-and-drop (folder) | `vrcstorage-scanner <FOLDER>` | Recursive scan of a directory |
@@ -103,6 +104,9 @@ vrcstorage-scanner/
 │   │   ├── rebuilder.rs        ← rebuild_unitypackage(): rewrites TAR+gzip archive
 │   │   └── script_neutralizer.rs ← neutralize_script(): comments out dangerous C# lines
 │   │
+│   ├── export/                 ← `export` subcommand implementation
+│   │   └── mod.rs              ← run_export(): extracts .unitypackage to folder or ZIP
+│   │
 │   ├── scoring/
 │   │   ├── mod.rs              ← re-exports compute_score, apply_context_reductions, RiskLevel
 │   │   ├── scorer.rs           ← compute_score() + classification (Clean/Low/Medium/High/Critical)
@@ -139,7 +143,9 @@ vrcstorage-scanner/
 │       ├── texture_analysis.rs
 │       ├── metadata_analysis.rs
 │       ├── scoring_pipeline.rs
-│       └── edge_cases.rs
+│       ├── scoring_pipeline.rs
+│       ├── edge_cases.rs
+│       └── export.rs
 │
 └── benches/
     └── scan_performance.rs     ← benchmarks with criterion
@@ -372,6 +378,36 @@ Input (path or bytes)
 The `AssetType::Other` branch checks `crate::config::FORBIDDEN_EXTENSIONS` — only extensions
 on that list are removed. Unknown extensions fall through to "keep".
 
+### `export`
+
+- `run_export(input_path, output_type, out_dir, skip_meta)` — full export pipeline. Reads the
+  file, detects its type, extracts all assets via `extractor::extract()`, then writes them to
+  a folder or ZIP preserving original Unity paths (e.g. `Assets/Scripts/MyScript.cs`).
+- **Output types:** `"folder"` (default) or `"zip"`.
+- **Default output path:** `<input-stem>-exported/` next to the input file, or
+  `<input-stem>-exported.zip` for ZIP.
+- **`.meta` files** are exported alongside each asset (from `PackageEntry::meta_content`).
+  Use `--skip-meta` / `-m` to omit them.
+- **Path sanitization:** entries with `..` in their `original_path` are rejected (path traversal
+  prevention). Empty-byte entries (orphan pathnames) are skipped.
+- `ExportReport` — summary struct: `input_path`, `output_path`, `output_type`, `skip_meta`,
+  `total_entries`, `exported_assets`, `exported_meta`, `skipped_empty`, `skipped_unsafe`,
+  `warnings`.
+- `ExportType` — enum: `Folder` | `Zip`.
+- `sanitize_export_path(raw)` — returns `Option<PathBuf>` with a platform-native clean path,
+  rejecting any segment equal to `".."`.
+- `sanitize_export_path_zip(raw)` — same but returns `Option<String>` with forward-slash
+  separators (ZIP standard).
+
+**Edge cases handled:**
+| Case | Behaviour |
+|---|---|
+| Entry with `original_path` containing `..` | Skipped, counted in `skipped_unsafe` |
+| Entry with zero `bytes` (orphan pathname) | Skipped, counted in `skipped_empty` |
+| Non-unitypackage / non-ZIP input | Returns `ExportError` |
+| Duplicate paths | Last write wins (directory overwrite) |
+| Missing parent directories | Created automatically via `create_dir_all` |
+
 ---
 
 ## 5. Code Conventions
@@ -386,6 +422,7 @@ these are:
 // src/main.rs
 mod analysis;
 mod config;   // ← REQUIRED — all modules use crate::config::* from the binary context
+mod export;   // ← export subcommand
 mod ingestion;
 mod pipeline;
 mod report;
@@ -1309,6 +1346,21 @@ cargo run -- sanitize path/to/file.unitypackage --output out.unitypackage --dry-
 
 # Sanitize acting on Medium+ findings
 cargo run -- sanitize path/to/file.unitypackage --min-severity medium
+
+# Export a .unitypackage to a folder (default)
+cargo run -- export path/to/file.unitypackage
+
+# Export to a ZIP file
+cargo run -- export path/to/file.unitypackage --output zip
+
+# Export to a custom output directory
+cargo run -- export path/to/file.unitypackage --out-dir ./my_export
+
+# Export without .meta files
+cargo run -- export path/to/file.unitypackage --skip-meta
+
+# Export to ZIP without .meta files
+cargo run -- export path/to/file.unitypackage --output zip --skip-meta
 
 # Drag-and-drop (single file) — triggers interactive pause + sanitize prompt (default Y)
 cargo run -- path/to/file.unitypackage
