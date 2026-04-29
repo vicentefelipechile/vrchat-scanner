@@ -711,6 +711,11 @@ fn print_credits(caps: TermCaps) {
         println!("  GitHub     : https://github.com/vicentefelipechile");
         println!();
         println!("{}", sep.dimmed());
+        println!("{}", "  ACKNOWLEDGEMENTS".bold().cyan());
+        println!("{}", sep.dimmed());
+        println!("  Tester     : anonberry");
+        println!();
+        println!("{}", sep.dimmed());
         println!("{}", "  DESCRIPTION".bold().cyan());
         println!("{}", sep.dimmed());
         println!("  Static analysis tool for Unity/VRChat packages.");
@@ -732,6 +737,11 @@ fn print_credits(caps: TermCaps) {
         println!("{sep}");
         println!("  SummerTYT");
         println!("  GitHub     : https://github.com/vicentefelipechile");
+        println!();
+        println!("{sep}");
+        println!("  ACKNOWLEDGEMENTS");
+        println!("{sep}");
+        println!("  Tester     : anonberry");
         println!();
         println!("{sep}");
         println!("  DESCRIPTION");
