@@ -143,7 +143,7 @@ async fn main() {
             let mut batch: Vec<BatchResult> = Vec::new();
 
             for path in &targets {
-                let (level, _findings) = run_scan_command(path, &output, None, false, caps);
+                let (level, _findings) = run_scan_command(path, &output, None, false, caps, false);
                 if level == scoring::RiskLevel::Critical {
                     any_critical = true;
                 }
@@ -236,7 +236,7 @@ async fn main() {
             let batch_start = std::time::Instant::now();
             for (idx, path) in targets.iter().enumerate() {
                 print_file_header(idx + 1, targets.len(), path, caps);
-                let (level, findings) = run_scan_command(path, "cli", None, true, caps);
+                let (level, findings) = run_scan_command(path, "cli", None, true, caps, true);
 
                 if level == scoring::RiskLevel::Critical {
                     any_critical = true;
@@ -755,6 +755,7 @@ fn run_scan_command(
     output_file: Option<&std::path::Path>,
     verbose: bool,
     caps: TermCaps,
+    hide_low: bool,
 ) -> (scoring::RiskLevel, Vec<report::Finding>) {
     if !path.exists() {
         eprintln!("{} File not found: {}", "ERROR:".red().bold(), path.display());
@@ -818,7 +819,7 @@ fn run_scan_command(
             }
         }
         _ => {
-            report::cli_reporter::print_report(&scan_report, level, verbose, caps);
+            report::cli_reporter::print_report(&scan_report, level, verbose, caps, hide_low);
             if let Some(out_path) = output_file {
                 let json_str = report::json_reporter::to_json(&scan_report).unwrap_or_default();
                 std::fs::write(out_path, json_str).expect("Failed to write output file");

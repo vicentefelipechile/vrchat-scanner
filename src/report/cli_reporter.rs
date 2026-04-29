@@ -14,7 +14,7 @@ use super::{finding::{Finding, FindingId, Severity}, json_reporter::ScanReport};
 ///   and a user-facing verdict at the end (drag-and-drop / end-user mode).
 /// * `caps` — terminal capabilities; when `caps.unicode = false` box-drawing
 ///   characters are replaced with plain ASCII hyphens/equals.
-pub fn print_report(report: &ScanReport, level: RiskLevel, verbose: bool, caps: TermCaps) {
+pub fn print_report(report: &ScanReport, level: RiskLevel, verbose: bool, caps: TermCaps, hide_low: bool) {
     let (_sep, thin, thick) = if caps.unicode {
         ("─".repeat(52), "─".repeat(52), "━".repeat(52))
     } else {
@@ -42,7 +42,21 @@ pub fn print_report(report: &ScanReport, level: RiskLevel, verbose: bool, caps: 
     );
 
     // ── Findings ──────────────────────────────────────────────
-    let count = report.findings.len();
+    let visible: Vec<&Finding> = if hide_low {
+        report.findings.iter().filter(|f| f.severity != Severity::Low).collect()
+    } else {
+        report.findings.iter().collect()
+    };
+    let count = visible.len();
+    let hidden_count = report.findings.len() - count;
+    let hidden_points: u32 = if hide_low {
+        report.findings.iter()
+            .filter(|f| f.severity == Severity::Low)
+            .map(|f| f.points)
+            .sum()
+    } else {
+        0
+    };
     if count == 0 {
         if caps.unicode {
             println!("\n{}", "  No findings detected. ✓".green().bold());
@@ -53,8 +67,29 @@ pub fn print_report(report: &ScanReport, level: RiskLevel, verbose: bool, caps: 
         println!("\n{} ({} found)", "FINDINGS".bold(), count);
         println!("{}", thin.dimmed());
 
-        for f in &report.findings {
+        for f in &visible {
             print_finding(f, verbose, caps);
+        }
+    }
+
+    // ── Hidden Low-severity note ──────────────────────────────
+    if hide_low && hidden_count > 0 {
+        let plural = if hidden_count == 1 { "" } else { "s" };
+        if caps.unicode {
+            println!(
+                "\n  {} ({} Low-severity finding{} hidden  ·  +{} pts)",
+                "ℹ".dimmed(),
+                hidden_count,
+                plural,
+                hidden_points
+            );
+        } else {
+            println!(
+                "\n  ({} Low-severity finding{} hidden  ·  +{} pts)",
+                hidden_count,
+                plural,
+                hidden_points
+            );
         }
     }
 

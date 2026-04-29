@@ -48,7 +48,7 @@ pub const SCORE_CLEAN_MAX: u32 = 30;
 
 /// Upper bound (inclusive) for the **Low** risk band.
 /// Packages in this range are published with an audit note for the moderator.
-pub const SCORE_LOW_MAX: u32 = 60;
+pub const SCORE_LOW_MAX: u32 = 75;
 
 /// Upper bound (inclusive) for the **Medium** risk band.
 /// Manual review is recommended but the package is not automatically held.
