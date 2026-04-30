@@ -35,6 +35,7 @@ pub struct AssetCounts {
 }
 
 impl ScanReport {
+    /// Build a ScanReport from a completed scan pipeline.
     pub fn build(
         file: FileRecord,
         mut findings: Vec<Finding>,
@@ -68,6 +69,32 @@ impl ScanReport {
             findings,
             assets_analyzed: counts,
             scan_duration_ms: duration_ms,
+        }
+    }
+
+    /// Create a minimal error ScanReport for a file that could not be scanned.
+    pub fn error_report(file_id: &str, error_msg: &str) -> Self {
+        use crate::ingestion::FileType;
+        ScanReport {
+            schema_version: "1.0".to_string(),
+            scanner: "vrcstorage-scanner".to_string(),
+            file: FileRecord {
+                path: file_id.to_string(),
+                size_bytes: 0,
+                file_type: FileType::UnityPackage,
+                sha256: String::new(),
+                md5: String::new(),
+                sha1: String::new(),
+                timestamp: chrono::Utc::now(),
+            },
+            risk: RiskSummary {
+                score: 0,
+                level: "ERROR".to_string(),
+                recommendation: error_msg.to_string(),
+            },
+            findings: Vec::new(),
+            assets_analyzed: AssetCounts::default(),
+            scan_duration_ms: 0,
         }
     }
 }

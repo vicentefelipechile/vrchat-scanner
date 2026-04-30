@@ -1,5 +1,6 @@
 use crate::config::{REDUCE_HTTP_VRC, REDUCE_REFLECT_EDITOR, REDUCE_POLYGLOT_NO_LOADER};
 use crate::report::{Finding, FindingId, Severity};
+use serde::Serialize;
 
 /// Apply context-aware score reductions to findings.
 ///
@@ -51,7 +52,7 @@ pub fn apply_context_reductions(findings: &mut [Finding], source_context: &Analy
 }
 
 /// Context gathered from the analysis phases
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct AnalysisContext {
     /// Script includes `using VRC.SDK3` or `using UdonSharp`
     pub has_vrchat_sdk: bool,

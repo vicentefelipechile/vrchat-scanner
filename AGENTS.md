@@ -39,13 +39,16 @@ executing the content.
 | CLI TXT | `vrcstorage-scanner scan <FILE> --output txt -f report.txt` | Plain-text report to file |
 | CLI sanitize | `vrcstorage-scanner sanitize <FILE>` | Remove/neutralize malicious assets |
 | CLI export | `vrcstorage-scanner export <FILE>` | Extract to folder or ZIP |
+| CLI tree | `vrcstorage-scanner tree <FILE> --export txt/json/xml [--pretty]` | Render package file-tree |
 | Drag-and-drop (single) | `vrcstorage-scanner <FILE>` | Non-technical users |
 | Drag-and-drop (multi) | `vrcstorage-scanner <FILE1> <FILE2> …` | Multiple files dropped at once |
 | Drag-and-drop (folder) | `vrcstorage-scanner <FOLDER>` | Recursive scan of a directory |
 | HTTP server | `vrcstorage-scanner serve --port 8080` | Cloudflare Containers (R2 download) |
 
-**Server output:** `POST /scan` with body `{ "r2_url": "...", "file_id": "...", "expected_sha256": "..." }`.
-The server downloads the file from R2, scans it, and returns the JSON report.
+**Server endpoints:** `POST /scan`, `POST /sanitize`, `POST /scan-batch`, `GET /health`.
+Supports `?format=txt`, `?verbose=true`, `?min_severity=high` query params.
+Sanitize returns cleaned `.unitypackage` bytes with metadata in headers.
+Batch scan accepts an array of files and returns aggregate results.
 
 ---
 
@@ -106,6 +109,9 @@ vrcstorage-scanner/
 │   │
 │   ├── export/                 ← `export` subcommand implementation
 │   │   └── mod.rs              ← run_export(): extracts .unitypackage to folder or ZIP
+│   │
+│   ├── tree/                   ← `tree` subcommand implementation
+│   │   └── mod.rs              ← run_tree(): renders package file-tree in TXT/JSON/XML
 │   │
 │   ├── scoring/
 │   │   ├── mod.rs              ← re-exports compute_score, apply_context_reductions, RiskLevel
@@ -410,6 +416,45 @@ on that list are removed. Unknown extensions fall through to "keep".
 
 ---
 
+### `tree`
+
+- `run_tree(input_path, format, options)` — builds and renders the internal file-tree of a
+  `.unitypackage` or `.zip` file. Reads the file, detects its type, extracts all assets via
+  `extractor::extract()`, builds a `TreeNode` hierarchy, and renders the output.
+- **Output formats:** `Txt` (default), `Json`, or `Xml`.
+- **`--pretty` flag:** enables Unicode box-drawing characters (`├──`, `└──`, `│`) in TXT output.
+  Ignored for JSON and XML (a warning is printed if specified with those formats).
+- **`-f` / `--output-file`:** writes the rendered tree to a file instead of stdout.
+- `TreeNode` — recursive tree node: `name`, `asset_type` (String label, `None` for directories),
+  `size_bytes`, `has_meta`, `children`.
+- `TreeReport` — summary struct: `total_entries`.
+- `TreeFormat` — enum: `Txt`, `Json`, `Xml`.
+- `TreeOptions` — config: `pretty: bool`.
+- **Tree building:** `build_tree()` iterates all `PackageEntry` items in the `PackageTree`,
+  splits `original_path` by `/`, and inserts each entry into the tree hierarchy. Directories
+  are created implicitly for intermediate path segments. `.meta` content is shown as a child
+  node of its parent file in TXT output, and as `has_meta: true` in JSON/XML.
+- **Sorting:** directories appear before files; both sorted alphabetically (case-insensitive).
+- **TXT rendering:** recursive descent with prefix/indent strings. Pretty mode uses
+  `├──`/`└──`/`│   `; ASCII mode uses `|--`/`` `-- ``/`|   `.
+- **JSON rendering:** manual JSON construction with `serde_json::Value`. Output includes
+  `file`, `total_entries`, and recursive `tree` with `name`, `type`, `size_bytes`, `has_meta`,
+  `children`.
+- **XML rendering:** manual XML construction with proper escaping (`&`, `<`, `>`, `"`).
+  Root element is `<package>`; directories are `<directory>`; files are `<file>` with
+  attributes `name`, `type`, `size_bytes`, `has_meta`.
+- **Size formatting:** helper `format_size()` renders bytes as `B` / `KB` / `MB` / `GB`.
+
+| Case | Behaviour |
+|---|---|
+| File has `.meta` | `has_meta: true`; `.meta` shown as child in TXT |
+| File without `.meta` | `has_meta: false` |
+| Empty package (no entries) | Shows `"0 entries"` header |
+| Non-unitypackage / non-ZIP input | Returns error |
+| `--pretty --export json` or `--pretty --export xml` | Warning printed; pretty is ignored |
+
+---
+
 ## 5. Code Conventions
 
 ### Dual crate root — critical rule
@@ -430,6 +475,7 @@ mod sanitize; // ← sanitize subcommand
 mod scoring;
 mod server;
 mod terminal; // ← TermCaps capability detection
+mod tree;     // ← tree subcommand
 mod utils;
 mod whitelist; // ← Known-file whitelist evaluation
 ```
@@ -1258,8 +1304,18 @@ by a Worker when a new upload arrives.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/scan` | Download from R2, scan, return JSON report |
+| `POST` | `/scan` | Download from R2, scan, return JSON/TXT report |
+| `POST` | `/sanitize` | Download from R2, sanitize, return cleaned `.unitypackage` |
+| `POST` | `/scan-batch` | Download and scan multiple files from R2, return aggregate JSON |
 | `GET` | `/health` | Returns `{"ok": true}` |
+
+### Query parameters (all endpoints)
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `format` | string | `json` | Output format: `"json"` or `"txt"` (TXT only for `/scan`) |
+| `verbose` | bool | `false` | Include human-readable explanations for each finding |
+| `min_severity` | string | — | Filter findings: `"low"`, `"medium"`, `"high"`, `"critical"` |
 
 ### `POST /scan` request body
 
@@ -1274,19 +1330,88 @@ by a Worker when a new upload arrives.
 If `expected_sha256` is provided and the downloaded file's hash does not match, the server
 returns HTTP 400.
 
+### `POST /scan` response (JSON, 200 OK)
+
+```json
+{
+  "file_id": "some-uuid",
+  "scan_result": { <ScanReport> },
+  "analysis_context": {
+    "has_vrchat_sdk": false,
+    "is_managed_dotnet": false,
+    "in_editor_folder": false,
+    "has_loader_script": false
+  },
+  "ok": true
+}
+```
+
+Use `?format=txt` to receive `Content-Type: text/plain` with the plain-text report instead.
+
+### `POST /sanitize`
+
+Same request body as `/scan`. Uses `min_severity=high` by default.
+
+**Response (200 OK):**
+- `Content-Type: application/octet-stream`
+- `Content-Disposition: attachment; filename="{file_id}-sanitized.unitypackage"`
+- `X-Sanitize-Report: <JSON SanitizeReport>`
+- `X-Original-Score: <u32>`
+- `X-Residual-Score: <u32>`
+
+Returns the cleaned `.unitypackage` bytes directly. The sanitize report is embedded in
+the `X-Sanitize-Report` header as JSON.
+
+### `POST /scan-batch`
+
+```json
+{
+  "files": [
+    { "r2_url": "...", "file_id": "uuid-1", "expected_sha256": "..." },
+    { "r2_url": "...", "file_id": "uuid-2" }
+  ]
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "results": [<ScanResponse>, <ScanResponse>, ...],
+  "ok": true
+}
+```
+
+Files that fail to download or scan produce `"ok": false` entries — the batch continues
+processing remaining files.
+
 ### HTTP error codes
 
 | Code | Meaning |
 |---|---|
-| `200` | Scan completed (even Critical — the Worker enforces rejection) |
-| `400` | SHA-256 mismatch |
+| `200` | Scan/sanitize completed successfully |
+| `400` | SHA-256 mismatch, invalid severity, or empty batch |
+| `413` | File exceeds maximum download size (500 MB) |
 | `502` | R2 download failed |
-| `500` | Internal scan or serialization error |
+| `500` | Internal scan/serialize error |
+
+All error responses are JSON: `{ "error": "message", "code": <u16> }`.
+
+### Timeout and size limits
+
+- Download timeout: **30 seconds**
+- Connect timeout: **10 seconds**
+- Maximum file size: **500 MB** (checked via `Content-Length` header and post-download)
 
 ### Memory model
 
 The container **never writes files to disk**. All data — download buffer, extracted tree,
-findings — lives fully in memory. This makes it safe to run multiple instances concurrently.
+findings, sanitized package bytes — lives fully in memory. This makes it safe to run multiple
+instances concurrently.
+
+### Graceful shutdown
+
+The server handles `SIGTERM` (Unix) and `Ctrl+C` (all platforms) for clean shutdown. All
+requests are traced via `tower_http::TraceLayer`.
 
 ---
 
@@ -1361,6 +1486,24 @@ cargo run -- export path/to/file.unitypackage --skip-meta
 
 # Export to ZIP without .meta files
 cargo run -- export path/to/file.unitypackage --output zip --skip-meta
+
+# Render the file-tree of a .unitypackage (TXT, default)
+cargo run -- tree path/to/file.unitypackage
+
+# Render tree with Unicode box-drawing chars (--pretty, TXT only)
+cargo run -- tree path/to/file.unitypackage --pretty
+
+# Render tree as plain ASCII TXT
+cargo run -- tree path/to/file.unitypackage --pretty=false
+
+# Render tree as JSON
+cargo run -- tree path/to/file.unitypackage --export json
+
+# Render tree as XML
+cargo run -- tree path/to/file.unitypackage --export xml
+
+# Write tree output to a file
+cargo run -- tree path/to/file.unitypackage --export txt -f tree.txt
 
 # Drag-and-drop (single file) — triggers interactive pause + sanitize prompt (default Y)
 cargo run -- path/to/file.unitypackage

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Severity level of a finding
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
     Low,
     Medium,

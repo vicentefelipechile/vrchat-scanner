@@ -24,3 +24,6 @@ mod edge_cases;
 
 #[path = "integration/export.rs"]
 mod export;
+
+#[path = "integration/tree_output.rs"]
+mod tree_output;

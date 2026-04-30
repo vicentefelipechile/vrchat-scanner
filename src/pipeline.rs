@@ -36,7 +36,20 @@ pub fn run_scan_full(path: &Path) -> crate::utils::Result<(ScanReport, AnalysisC
 }
 
 /// Scan from raw bytes with a synthetic file_id (used by the server).
+#[allow(dead_code)]
 pub fn run_scan_bytes(data: &[u8], file_id: &str) -> crate::utils::Result<ScanReport> {
+    let (report, _, _) = run_scan_bytes_full(data, file_id)?;
+    Ok(report)
+}
+
+/// Scan from raw bytes returning the full pipeline output.
+///
+/// Like [`run_scan_bytes`] but also returns [`AnalysisContext`] and [`PackageTree`].
+/// Used by the server to expose context information in the response.
+pub fn run_scan_bytes_full(
+    data: &[u8],
+    file_id: &str,
+) -> crate::utils::Result<(ScanReport, AnalysisContext, PackageTree)> {
     let start = Instant::now();
 
     let fake_path = Path::new(file_id);
@@ -60,8 +73,8 @@ pub fn run_scan_bytes(data: &[u8], file_id: &str) -> crate::utils::Result<ScanRe
         timestamp: chrono::Utc::now(),
     };
 
-    let (report, _, _) = run_scan_with_record(data.to_vec(), file_record, start)?;
-    Ok(report)
+    let result = run_scan_with_record(data.to_vec(), file_record, start)?;
+    Ok(result)
 }
 
 fn run_scan_with_record(

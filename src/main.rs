@@ -7,6 +7,7 @@ mod sanitize;
 mod scoring;
 mod server;
 mod terminal;
+mod tree;
 mod utils;
 mod export;
 mod whitelist;
@@ -105,6 +106,25 @@ enum Command {
         skip_meta: bool,
     },
 
+    /// Display the internal file-tree of a Unity package
+    Tree {
+        /// Path to the .unitypackage or .zip file
+        #[arg(value_name = "FILE")]
+        path: PathBuf,
+
+        /// Output format: "txt" (default), "json", or "xml"
+        #[arg(short, long, default_value = "txt")]
+        export: String,
+
+        /// Use Unicode box-drawing for txt output (ignored for json/xml)
+        #[arg(short, long, default_value_t = true)]
+        pretty: bool,
+
+        /// Write output to a file instead of stdout
+        #[arg(short = 'f', long)]
+        output_file: Option<PathBuf>,
+    },
+
     /// Start HTTP server mode (for Cloudflare Containers)
     Serve {
         /// Port to listen on
@@ -191,6 +211,32 @@ async fn main() {
                 std::process::exit(1);
             }
             run_export_command(&path, &out_lower, out_dir.as_deref(), skip_meta, caps);
+        }
+
+        // vrcstorage-scanner tree <FILE> [--export txt|json|xml] [--pretty] [-f <FILE>]
+        (Some(Command::Tree { path, export, pretty, output_file }), _, _) => {
+            print_banner(caps);
+            let export_lower = export.to_lowercase();
+            let format = match export_lower.as_str() {
+                "json" => tree::TreeFormat::Json,
+                "xml"  => tree::TreeFormat::Xml,
+                _     => tree::TreeFormat::Txt,
+            };
+            if export_lower != "txt" && pretty {
+                eprintln!(
+                    "{} --pretty is only meaningful for --export txt; ignoring.",
+                    "NOTE:".yellow()
+                );
+            }
+            if export_lower != "txt" && export_lower != "json" && export_lower != "xml" {
+                eprintln!(
+                    "{} Invalid export format '{}'. Use 'txt', 'json', or 'xml'.",
+                    "ERROR:".red().bold(),
+                    export
+                );
+                std::process::exit(1);
+            }
+            run_tree_command(&path, format, pretty, output_file.as_deref(), caps);
         }
 
         // vrcstorage-scanner serve [--port N]
@@ -1066,6 +1112,92 @@ fn print_export_report(report: &export::ExportReport, caps: TermCaps) {
         println!("  {check} Successfully exported {total} entries.");
     }
     println!("  {sep}");
+    println!();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tree command
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn run_tree_command(
+    path: &std::path::Path,
+    format: tree::TreeFormat,
+    pretty: bool,
+    output_file: Option<&std::path::Path>,
+    caps: TermCaps,
+) {
+    if !path.exists() {
+        eprintln!("{} File not found: {}", "ERROR:".red().bold(), path.display());
+        std::process::exit(1);
+    }
+
+    let spinner = {
+        let pb = indicatif::ProgressBar::new_spinner();
+        pb.set_style(
+            indicatif::ProgressStyle::with_template(if caps.unicode {
+                "  {spinner:.cyan} {msg}"
+            } else {
+                "  {msg}..."
+            })
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        pb.enable_steady_tick(std::time::Duration::from_millis(80));
+        pb.set_message(format!("Building tree for {}", path.display()));
+        pb
+    };
+
+    let options = tree::TreeOptions { pretty };
+    let result = tree::run_tree(path, &format, &options);
+    spinner.finish_and_clear();
+
+    match result {
+        Ok((report, output)) => {
+            if let Some(out_path) = output_file {
+                std::fs::write(out_path, &output).unwrap_or_else(|e| {
+                    eprintln!("{} Failed to write output: {}", "ERROR:".red().bold(), e);
+                    std::process::exit(1);
+                });
+                print_tree_summary(&report, Some(out_path), caps);
+            } else {
+                println!();
+                println!("{}", output);
+                print_tree_summary(&report, None, caps);
+            }
+        }
+        Err(e) => {
+            eprintln!("{} {}", "ERROR:".red().bold(), e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn print_tree_summary(report: &tree::TreeReport, output_path: Option<&std::path::Path>, caps: TermCaps) {
+    let sep = if caps.unicode {
+        "═".repeat(64)
+    } else {
+        "=".repeat(64)
+    };
+
+    println!();
+    println!("  {sep}");
+    if caps.unicode {
+        println!("{}", "   TREE REPORT".bold().cyan());
+    } else {
+        println!("   TREE REPORT");
+    }
+    println!("  {sep}");
+
+    println!("\n    Total entries : {}", report.total_entries);
+
+    if let Some(out) = output_path {
+        println!(
+            "    Output        : {}",
+            out.display()
+        );
+    }
+
+    println!("\n  {sep}");
     println!();
 }
 

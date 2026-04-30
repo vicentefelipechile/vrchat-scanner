@@ -8,5 +8,6 @@ pub mod report;
 pub mod sanitize;
 pub mod scoring;
 pub mod terminal;
+pub mod tree;
 pub mod utils;
 pub mod whitelist;
