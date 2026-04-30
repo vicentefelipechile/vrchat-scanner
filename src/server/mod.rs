@@ -30,7 +30,7 @@ const DEFAULT_MAX_DOWNLOAD_BYTES: u64 = 500 * 1024 * 1024; // 500 MB
 /// Body for `POST /scan` and `POST /sanitize`.
 #[derive(Debug, Deserialize)]
 pub struct ScanRequest {
-    pub r2_url: String,
+    pub url: String,
     pub file_id: String,
     #[serde(default)]
     pub expected_sha256: Option<String>,
@@ -105,6 +105,7 @@ pub async fn serve(addr: SocketAddr) -> anyhow::Result<()> {
         .route("/scan-batch", post(handle_scan_batch))
         .route("/sanitize", post(handle_sanitize))
         .route("/health", get(|| async { Json(json!({"ok": true})) }))
+        .route("/gui", get(handle_gui))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -247,7 +248,7 @@ async fn download_and_verify(
 ) -> Result<Vec<u8>, (StatusCode, Json<ErrorResponse>)> {
     let resp = state
         .http
-        .get(&req.r2_url)
+        .get(&req.url)
         .send()
         .await
         .map_err(|e| json_err(StatusCode::BAD_GATEWAY, format!("Download failed: {e}")))?;
@@ -503,3 +504,201 @@ async fn handle_scan_batch(
         ok: true,
     }))
 }
+
+// ─── GET /gui ─────────────────────────────────────────────────────────────────
+
+async fn handle_gui() -> Html<&'static str> {
+    Html(GUI_HTML)
+}
+
+const GUI_HTML: &str = r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vrcstorage-scanner · Console</title>
+<style>
+  body { font-family: monospace; margin: 0 }
+  .layout { display: flex; height: 100vh }
+  .sidebar { width: 200px; border-right: 1px solid #ccc; padding: 12px; overflow-y: auto }
+  .sidebar a { display: block; padding: 4px 0; cursor: pointer; text-decoration: none }
+  .sidebar a:hover { text-decoration: underline }
+  .main { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column }
+  .panel { display: none; flex: 1; flex-direction: column }
+  .panel.active { display: flex }
+  .field { margin-bottom: 10px }
+  .field label { display: block; font-weight: bold; margin-bottom: 2px }
+  .field input, .field select, .field textarea { width: 100%; max-width: 500px; padding: 4px; font-family: monospace }
+  .field textarea { height: 120px }
+  .row { margin-bottom: 12px }
+  input[type=submit], button { padding: 6px 16px; font-family: monospace; cursor: pointer }
+  h2 { margin-top: 0 }
+  pre { border: 1px solid #ccc; padding: 12px; flex: 1; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 0; background: #fafafa }
+  .status { font-weight: bold }
+</style>
+</head>
+<body>
+<div class="layout">
+<div class="sidebar">
+  <b>Endpoints</b><br><br>
+  <a onclick="showPanel('scan')" id="nav-scan">POST /scan</a>
+  <a onclick="showPanel('sanitize')" id="nav-sanitize">POST /sanitize</a>
+  <a onclick="showPanel('batch')" id="nav-batch">POST /scan-batch</a>
+  <a onclick="checkHealth()" id="nav-health">GET /health</a>
+</div>
+<div class="main">
+
+  <!-- ── /scan ── -->
+  <div id="panel-scan" class="panel active">
+    <h2>POST /scan</h2>
+    <form onsubmit="return false">
+      <div class="field"><label>R2 URL</label><input id="scan-url"></div>
+      <div class="field"><label>File ID</label><input id="scan-fileid"></div>
+      <div class="field"><label>Expected SHA-256</label><input id="scan-sha"></div>
+      <div class="field"><label>Format</label>
+        <select id="scan-fmt"><option value="json">json</option><option value="txt">txt</option></select>
+      </div>
+      <div class="field"><label>Min Severity</label>
+        <select id="scan-minsev">
+          <option value="">(all)</option><option value="low">low</option><option value="medium">medium</option><option value="high" selected>high</option><option value="critical">critical</option>
+        </select>
+      </div>
+      <div class="field"><label><input type="checkbox" id="scan-verbose"> Verbose</label></div>
+      <div class="row"><button onclick="doScan()">Scan</button></div>
+    </form>
+    <span class="status" id="scan-status"></span>
+    <pre id="scan-result">Click Scan to send request.</pre>
+  </div>
+
+  <!-- ── /sanitize ── -->
+  <div id="panel-sanitize" class="panel">
+    <h2>POST /sanitize</h2>
+    <form onsubmit="return false">
+      <div class="field"><label>R2 URL</label><input id="san-url"></div>
+      <div class="field"><label>File ID</label><input id="san-fileid"></div>
+      <div class="field"><label>Expected SHA-256</label><input id="san-sha"></div>
+      <div class="field"><label>Min Severity</label>
+        <select id="san-minsev">
+          <option value="low">low</option><option value="medium">medium</option><option value="high" selected>high</option><option value="critical">critical</option>
+        </select>
+      </div>
+      <div class="row"><button onclick="doSanitize()">Sanitize</button></div>
+    </form>
+    <span class="status" id="san-status"></span>
+    <pre id="san-result">Click Sanitize. Cleaned .unitypackage will download automatically.</pre>
+  </div>
+
+  <!-- ── /scan-batch ── -->
+  <div id="panel-batch" class="panel">
+    <h2>POST /scan-batch</h2>
+    <form onsubmit="return false">
+      <div class="field"><label>Files (JSON array)</label>
+        <textarea id="batch-json">[
+  {"url": "https://...", "file_id": "file-1"},
+  {"url": "https://...", "file_id": "file-2"}
+]</textarea>
+      </div>
+      <div class="field"><label>Min Severity</label>
+        <select id="batch-minsev">
+          <option value="">(all)</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="critical">critical</option>
+        </select>
+      </div>
+      <div class="field"><label><input type="checkbox" id="batch-verbose"> Verbose</label></div>
+      <div class="row"><button onclick="doBatch()">Scan Batch</button></div>
+    </form>
+    <span class="status" id="batch-status"></span>
+    <pre id="batch-result">Click Scan Batch to send request.</pre>
+  </div>
+
+</div>
+</div>
+
+<script>
+function _(id){ return document.getElementById(id) }
+
+function showPanel(name) {
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  _('panel-'+name).classList.add('active');
+}
+
+function setStatus(id, ok, text) {
+  var el = _(id);
+  el.textContent = text||(ok?'200 OK':'ERROR');
+  el.style.color = ok?'green':'red';
+}
+
+function setResult(id, text) { var el = _(id); el.textContent = text }
+
+async function doScan() {
+  var url = _('scan-url').value.trim();
+  var fid = _('scan-fileid').value.trim();
+  if(!url||!fid){ alert('R2 URL and File ID required'); return }
+  var sha = _('scan-sha').value.trim();
+  var fmt = _('scan-fmt').value;
+  var sev = _('scan-minsev').value;
+  var v = _('scan-verbose').checked;
+  var p = new URLSearchParams(); p.set('format',fmt); if(v)p.set('verbose','true'); if(sev)p.set('min_severity',sev);
+  var b = {url:url,file_id:fid}; if(sha)b.expected_sha256=sha;
+  setResult('scan-result','Scanning...'); setStatus('scan-status',0,'pending');
+  try {
+    var r = await fetch('/scan?'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+    var t = await r.text();
+    setStatus('scan-status',r.ok,r.status+' '+r.statusText);
+    setResult('scan-result',t);
+  } catch(e) { setStatus('scan-status',0,'NETWORK ERROR'); setResult('scan-result','Error: '+e.message) }
+}
+
+async function doSanitize() {
+  var url = _('san-url').value.trim();
+  var fid = _('san-fileid').value.trim();
+  if(!url||!fid){ alert('R2 URL and File ID required'); return }
+  var sha = _('san-sha').value.trim();
+  var sev = _('san-minsev').value;
+  var p = new URLSearchParams(); if(sev)p.set('min_severity',sev);
+  var b = {url:url,file_id:fid}; if(sha)b.expected_sha256=sha;
+  setResult('san-result','Sanitizing...'); setStatus('san-status',0,'pending');
+  try {
+    var r = await fetch('/sanitize?'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+    var rep = r.headers.get('x-sanitize-report');
+    var orig = r.headers.get('x-original-score');
+    var resid = r.headers.get('x-residual-score');
+    var info = r.status+' '+r.statusText+'\n\n';
+    info += 'X-Original-Score: '+orig+'\nX-Residual-Score: '+resid+'\n\n';
+    if(rep){ try{info += JSON.stringify(JSON.parse(rep),null,2)}catch(e2){info+=rep} }
+    setStatus('san-status',r.ok,r.ok?'200 OK':r.status);
+    setResult('san-result',info);
+    if(r.ok && (r.headers.get('content-type')||'').includes('octet-stream')){
+      var blob = await r.blob();
+      var a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fid+'-sanitized.unitypackage'; a.click();
+    }
+  } catch(e) { setStatus('san-status',0,'NETWORK ERROR'); setResult('san-result','Error: '+e.message) }
+}
+
+async function doBatch() {
+  var raw = _('batch-json').value.trim();
+  var sev = _('batch-minsev').value;
+  var v = _('batch-verbose').checked;
+  var files; try{files=JSON.parse(raw)}catch(e){alert('Invalid JSON');return}
+  if(!Array.isArray(files)||!files.length){alert('Files array required');return}
+  var p = new URLSearchParams(); if(v)p.set('verbose','true'); if(sev)p.set('min_severity',sev);
+  setResult('batch-result','Scanning '+files.length+' files...'); setStatus('batch-status',0,'pending');
+  try {
+    var r = await fetch('/scan-batch?'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({files:files})});
+    var t = await r.text();
+    setStatus('batch-status',r.ok,r.status+' '+r.statusText);
+    setResult('batch-result',t);
+  } catch(e) { setStatus('batch-status',0,'NETWORK ERROR'); setResult('batch-result','Error: '+e.message) }
+}
+
+async function checkHealth() {
+  showPanel('scan');
+  setResult('scan-result','Checking /health ...'); setStatus('scan-status',0,'pending');
+  try {
+    var r = await fetch('/health');
+    setResult('scan-result',await r.text());
+    setStatus('scan-status',r.ok,r.ok?'200 UP':r.status);
+  } catch(e) { setResult('scan-result','Error: '+e.message); setStatus('scan-status',0,'DOWN') }
+}
+</script>
+</body>
+</html>"##;

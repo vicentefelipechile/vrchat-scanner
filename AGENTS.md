@@ -1308,6 +1308,7 @@ by a Worker when a new upload arrives.
 | `POST` | `/sanitize` | Download from R2, sanitize, return cleaned `.unitypackage` |
 | `POST` | `/scan-batch` | Download and scan multiple files from R2, return aggregate JSON |
 | `GET` | `/health` | Returns `{"ok": true}` |
+| `GET` | `/gui` | Interactive test console (HTML) for manually testing all endpoints |
 
 ### Query parameters (all endpoints)
 
@@ -1321,7 +1322,7 @@ by a Worker when a new upload arrives.
 
 ```json
 {
-  "r2_url": "https://bucket.r2.cloudflarestorage.com/…",
+  "url": "https://bucket.r2.cloudflarestorage.com/…",
   "file_id": "some-uuid",
   "expected_sha256": "optional-hex-hash"
 }
@@ -1367,8 +1368,8 @@ the `X-Sanitize-Report` header as JSON.
 ```json
 {
   "files": [
-    { "r2_url": "...", "file_id": "uuid-1", "expected_sha256": "..." },
-    { "r2_url": "...", "file_id": "uuid-2" }
+    { "url": "...", "file_id": "uuid-1", "expected_sha256": "..." },
+    { "url": "...", "file_id": "uuid-2" }
   ]
 }
 ```
