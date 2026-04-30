@@ -393,7 +393,7 @@ fn write_xml_node_indent(
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn asset_type_label(at: &AssetType) -> &str {
+pub(crate) fn asset_type_label(at: &AssetType) -> &str {
     match at {
         AssetType::Script => "C#",
         AssetType::Dll => "DLL",

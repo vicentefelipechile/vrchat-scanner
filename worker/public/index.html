@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vrcstorage-scanner</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<!-- ========================================================================= -->
+<!-- Sidebar -->
+<!-- ========================================================================= -->
+<nav class="sidebar">
+	<h1>vrcstorage-scanner</h1>
+	<a data-panel="scan" class="active">Scan</a>
+	<a data-panel="sanitize">Sanitize</a>
+	<a data-panel="batch">Batch</a>
+	<a data-panel="stats">Cache Stats</a>
+	<a data-panel="health">Health</a>
+</nav>
+
+<!-- ========================================================================= -->
+<!-- Scan panel -->
+<!-- ========================================================================= -->
+<main>
+<section id="panel-scan" class="panel active">
+	<h2>POST /api/scan</h2>
+
+	<div class="field">
+		<label>R2 URL</label>
+		<input id="scan-url" placeholder="https://bucket.r2.cloudflarestorage.com/…">
+	</div>
+	<div class="field">
+		<label>File ID</label>
+		<input id="scan-fileid" placeholder="my-file">
+	</div>
+	<div class="field">
+		<label>Expected SHA-256 (optional — enables cache lookup)</label>
+		<input id="scan-sha" placeholder="hex-encoded SHA-256">
+	</div>
+	<div class="field">
+		<label>Format</label>
+		<select id="scan-fmt">
+			<option value="json">json</option>
+			<option value="txt">txt</option>
+		</select>
+	</div>
+	<div class="field">
+		<label>Min Severity</label>
+		<select id="scan-minsev">
+			<option value="">(all)</option>
+			<option value="low">low</option>
+			<option value="medium">medium</option>
+			<option value="high">high</option>
+			<option value="critical">critical</option>
+		</select>
+	</div>
+	<div class="field">
+		<label>
+			<input type="checkbox" id="scan-verbose">
+			Verbose explanations
+		</label>
+	</div>
+	<button id="scan-btn">Scan</button>
+	<span id="scan-status" class="status"></span>
+	<pre id="scan-result" class="result">Click Scan to send request.</pre>
+</section>
+
+<!-- ========================================================================= -->
+<!-- Sanitize panel -->
+<!-- ========================================================================= -->
+<section id="panel-sanitize" class="panel">
+	<h2>POST /api/sanitize</h2>
+
+	<div class="field">
+		<label>R2 URL</label>
+		<input id="san-url" placeholder="https://bucket.r2.cloudflarestorage.com/…">
+	</div>
+	<div class="field">
+		<label>File ID</label>
+		<input id="san-fileid" placeholder="my-file">
+	</div>
+	<div class="field">
+		<label>Expected SHA-256 (optional)</label>
+		<input id="san-sha" placeholder="hex-encoded SHA-256">
+	</div>
+	<div class="field">
+		<label>Min Severity</label>
+		<select id="san-minsev">
+			<option value="low">low</option>
+			<option value="medium">medium</option>
+			<option value="high" selected>high</option>
+			<option value="critical">critical</option>
+		</select>
+	</div>
+	<button id="san-btn">Sanitize</button>
+	<span id="san-status" class="status"></span>
+	<pre id="san-result" class="result">Click Sanitize. Cleaned .unitypackage downloads automatically.</pre>
+</section>
+
+<!-- ========================================================================= -->
+<!-- Batch panel -->
+<!-- ========================================================================= -->
+<section id="panel-batch" class="panel">
+	<h2>POST /api/scan-batch</h2>
+
+	<div class="field">
+		<label>Files (JSON array)</label>
+		<textarea id="batch-json">[
+  {"url": "https://…", "file_id": "file-1"},
+  {"url": "https://…", "file_id": "file-2"}
+]</textarea>
+	</div>
+	<div class="field">
+		<label>Min Severity</label>
+		<select id="batch-minsev">
+			<option value="">(all)</option>
+			<option value="low">low</option>
+			<option value="medium">medium</option>
+			<option value="high">high</option>
+			<option value="critical">critical</option>
+		</select>
+	</div>
+	<div class="field">
+		<label>
+			<input type="checkbox" id="batch-verbose">
+			Verbose explanations
+		</label>
+	</div>
+	<button id="batch-btn">Scan Batch</button>
+	<span id="batch-status" class="status"></span>
+	<pre id="batch-result" class="result">Click Scan Batch to send request.</pre>
+</section>
+
+<!-- ========================================================================= -->
+<!-- Cache Stats panel -->
+<!-- ========================================================================= -->
+<section id="panel-stats" class="panel">
+	<h2>GET /api/cache-stats</h2>
+
+	<button id="stats-btn">Refresh</button>
+	<span id="stats-status" class="status"></span>
+	<pre id="stats-result" class="result">Click Refresh to load stats.</pre>
+</section>
+
+<!-- ========================================================================= -->
+<!-- Health panel -->
+<!-- ========================================================================= -->
+<section id="panel-health" class="panel">
+	<h2>GET /api/health</h2>
+
+	<button id="health-btn">Check Health</button>
+	<span id="health-status" class="status"></span>
+	<pre id="health-result" class="result">Click Check Health.</pre>
+</section>
+
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

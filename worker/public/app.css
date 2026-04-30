@@ -1,0 +1,237 @@
+/* ========================================================================== */
+/* vrcstorage-scanner SPA                                                      */
+/* ========================================================================== */
+
+:root {
+	--bg: #0d1117;
+	--sidebar-bg: #161b22;
+	--border: #30363d;
+	--text: #c9d1d9;
+	--muted: #8b949e;
+	--accent: #58a6ff;
+	--danger: #f85149;
+	--warning: #d29922;
+	--success: #3fb950;
+	--panel-bg: #0d1117;
+	--input-bg: #21262d;
+	--btn-bg: #21262d;
+	--btn-hover: #30363d;
+}
+
+*, *::before, *::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+body {
+	font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+	background: var(--bg);
+	color: var(--text);
+	display: flex;
+	min-height: 100vh;
+}
+
+/* Sidebar
+   ========================================================================== */
+
+.sidebar {
+	width: 220px;
+	flex-shrink: 0;
+	background: var(--sidebar-bg);
+	border-right: 1px solid var(--border);
+	padding: 20px 0;
+	overflow-y: auto;
+}
+
+.sidebar h1 {
+	font-size: 15px;
+	font-weight: 700;
+	padding: 0 16px 16px;
+	color: var(--text);
+	border-bottom: 1px solid var(--border);
+	margin-bottom: 8px;
+}
+
+.sidebar a {
+	display: block;
+	padding: 8px 16px;
+	color: var(--muted);
+	text-decoration: none;
+	font-size: 13px;
+	cursor: pointer;
+	transition: color 0.15s, background 0.15s;
+}
+
+.sidebar a:hover {
+	color: var(--text);
+	background: var(--btn-hover);
+}
+
+.sidebar a.active {
+	color: var(--accent);
+	border-right: 2px solid var(--accent);
+}
+
+/* Main area
+   ========================================================================== */
+
+main {
+	flex: 1;
+	padding: 24px;
+	overflow-y: auto;
+}
+
+.panel {
+	display: none;
+}
+
+.panel.active {
+	display: block;
+}
+
+h2 {
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--text);
+	margin-bottom: 20px;
+	padding-bottom: 8px;
+	border-bottom: 1px solid var(--border);
+}
+
+/* Forms
+   ========================================================================== */
+
+.field {
+	margin-bottom: 14px;
+}
+
+.field label {
+	display: block;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--muted);
+	margin-bottom: 4px;
+}
+
+.field input,
+.field select,
+.field textarea {
+	width: 100%;
+	max-width: 520px;
+	padding: 8px 10px;
+	font-family: inherit;
+	font-size: 13px;
+	color: var(--text);
+	background: var(--input-bg);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	outline: none;
+	transition: border-color 0.15s;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+	border-color: var(--accent);
+}
+
+.field textarea {
+	height: 140px;
+	resize: vertical;
+}
+
+.field input[type="checkbox"] {
+	width: auto;
+	margin-right: 6px;
+}
+
+button {
+	padding: 8px 20px;
+	font-family: inherit;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text);
+	background: var(--btn-bg);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	cursor: pointer;
+	transition: background 0.15s, border-color 0.15s;
+	margin-bottom: 16px;
+}
+
+button:hover {
+	background: var(--btn-hover);
+	border-color: var(--accent);
+}
+
+button:active {
+	background: var(--input-bg);
+}
+
+/* Status & results
+   ========================================================================== */
+
+.status {
+	font-size: 12px;
+	font-weight: 600;
+	margin-left: 12px;
+}
+
+.status.ok { color: var(--success); }
+.status.err { color: var(--danger); }
+.status.pending { color: var(--warning); }
+
+.result {
+	background: var(--sidebar-bg);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	padding: 16px;
+	font-size: 12px;
+	line-height: 1.6;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-all;
+	max-height: 70vh;
+	color: var(--muted);
+}
+
+/* Responsive
+   ========================================================================== */
+
+@media (max-width: 640px) {
+	body {
+		flex-direction: column;
+	}
+
+	.sidebar {
+		width: 100%;
+		border-right: none;
+		border-bottom: 1px solid var(--border);
+		padding: 12px 0;
+		display: flex;
+		overflow-x: auto;
+	}
+
+	.sidebar h1 {
+		font-size: 13px;
+		padding: 0 12px 12px;
+		margin-bottom: 0;
+		border-bottom: none;
+	}
+
+	.sidebar a {
+		padding: 6px 12px;
+		font-size: 12px;
+		white-space: nowrap;
+	}
+
+	.sidebar a.active {
+		border-right: none;
+		border-bottom: 2px solid var(--accent);
+	}
+
+	main {
+		padding: 16px;
+	}
+}

@@ -4,6 +4,15 @@ use crate::ingestion::FileRecord;
 use crate::scoring::RiskLevel;
 use super::finding::Finding;
 
+/// A single entry in the package file-tree (flat list).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlatEntry {
+    pub path: String,
+    pub asset_type: String,
+    pub size_bytes: u64,
+    pub has_meta: bool,
+}
+
 /// Full scan result, suitable for serialization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanReport {
@@ -14,6 +23,8 @@ pub struct ScanReport {
     pub findings: Vec<Finding>,
     pub assets_analyzed: AssetCounts,
     pub scan_duration_ms: u128,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_tree: Option<Vec<FlatEntry>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +54,7 @@ impl ScanReport {
         level: RiskLevel,
         counts: AssetCounts,
         duration_ms: u128,
+        file_tree: Option<Vec<FlatEntry>>,
     ) -> Self {
         // Sort findings by severity desc, then points desc
         findings.sort_by(|a, b| {
@@ -69,6 +81,7 @@ impl ScanReport {
             findings,
             assets_analyzed: counts,
             scan_duration_ms: duration_ms,
+            file_tree,
         }
     }
 
@@ -95,6 +108,7 @@ impl ScanReport {
             findings: Vec::new(),
             assets_analyzed: AssetCounts::default(),
             scan_duration_ms: 0,
+            file_tree: None,
         }
     }
 }

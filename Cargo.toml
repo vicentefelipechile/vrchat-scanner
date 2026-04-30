@@ -61,13 +61,13 @@ anyhow = "1"
 colored = "2"
 indicatif = "0.17"
 
-# Timestamps
-chrono = { version = "0.4", features = ["serde"] }
+# Timestamps — pinear a versión compatible con rustc 1.85
+chrono = { version = "=0.4.38", features = ["serde"] }
 
 # HTTP server (modo serve para Cloudflare Containers)
 tokio = { version = "1", features = ["full"] }
 axum = "0.7"
-reqwest = { version = "0.12", features = ["stream", "json"] }
+reqwest = { version = "0.11", features = ["stream", "json"] }  # 0.11 no usa icu_*
 tower = "0.4"
 tower-http = { version = "0.5", features = ["trace"] }
 

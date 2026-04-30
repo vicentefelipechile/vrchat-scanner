@@ -1,30 +1,47 @@
 {
-  "name": "vrcstorage-scanner",
-  "main": "./worker/src/index.ts",
-  "compatibility_date": "2026-04-29",
-  "containers": [
-    {
-      "class_name": "ScannerContainer",
-      "image": "./Dockerfile",
-      "max_instances": 5,
-      "instance_type": "standard-2"
-    }
-  ],
-  "durable_objects": {
-    "bindings": [
-      {
-        "class_name": "ScannerContainer",
-        "name": "SCANNER"
-      }
-    ]
-  },
-  "migrations": [
-    {
-      "new_sqlite_classes": ["ScannerContainer"],
-      "tag": "v1"
-    }
-  ],
-  "observability": {
-    "enabled": true
-  }
+	"name": "vrcstorage-scanner",
+	"main": "./worker/src/index.ts",
+	"compatibility_date": "2026-04-29",
+	"assets": {
+		"directory": "./worker/public",
+		"html_handling": "auto-trailing-slash",
+		"not_found_handling": "single-page-application"
+	},
+	"containers": [
+		{
+			"name": "vrcstorage-scanner-scannercontainer",
+			"scheduling_policy": "default",
+			"class_name": "ScannerContainer",
+			"image": "./Dockerfile",
+			"max_instances": 5,
+			"instance_type": "standard-1",
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "SCAN_CACHE_DB",
+			"database_name": "vrcstorage-scanner",
+			"database_id": "00f09f5a-a88f-4490-a5f7-ace742d59210",
+			"migrations_dir": "./worker/migrations"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"class_name": "ScannerContainer",
+				"name": "SCANNER"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"new_sqlite_classes": [
+				"ScannerContainer"
+			],
+			"tag": "v1"
+		}
+	],
+	"observability": {
+		"enabled": true
+	}
 }

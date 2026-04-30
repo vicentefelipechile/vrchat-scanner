@@ -5,4 +5,4 @@ pub mod sanitize_reporter;
 pub mod txt_reporter;
 
 pub use finding::{Finding, FindingId, Severity};
-pub use json_reporter::{AssetCounts, ScanReport};
+pub use json_reporter::{AssetCounts, FlatEntry, ScanReport};

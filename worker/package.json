@@ -7,9 +7,11 @@
     "dev": "wrangler dev"
   },
   "dependencies": {
-    "@cloudflare/containers": "^0"
+    "@cloudflare/containers": "^0",
+    "hono": "^4.12.16"
   },
   "devDependencies": {
-    "wrangler": "^4"
+    "typescript": "^6.0.3",
+    "wrangler": "^4.86.0"
   }
 }

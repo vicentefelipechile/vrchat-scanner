@@ -5,9 +5,10 @@ use crate::analysis::run_all_analyses;
 use crate::ingestion::{extractor, FileRecord, FileType};
 use crate::ingestion::extractor::PackageTree;
 use crate::ingestion::type_detection::detect_type;
-use crate::report::ScanReport;
+use crate::report::{FlatEntry, ScanReport};
 use crate::scoring::{apply_context_reductions, compute_score};
 use crate::scoring::context::AnalysisContext;
+use crate::tree::asset_type_label;
 
 /// The full scan pipeline: ingest → extract → analyze → score → report.
 /// Returns the completed ScanReport.
@@ -87,6 +88,25 @@ fn run_scan_with_record(
     // Stage 1: Extract / build package tree
     let tree = extractor::extract(&data, &file_type)?;
 
+    // Build flat file-tree for caching / reporting
+    let file_tree: Option<Vec<FlatEntry>> = {
+        if file_type == FileType::UnityPackage || file_type == FileType::ZipArchive {
+            let mut entries: Vec<FlatEntry> = tree
+                .all_entries()
+                .map(|e| FlatEntry {
+                    path: e.original_path.clone(),
+                    asset_type: asset_type_label(&e.asset_type).to_string(),
+                    size_bytes: e.bytes.len() as u64,
+                    has_meta: e.meta_content.is_some(),
+                })
+                .collect();
+            entries.sort_by(|a, b| a.path.cmp(&b.path));
+            Some(entries)
+        } else {
+            None
+        }
+    };
+
     // Stages 2-5: Run all analyses in parallel
     let (mut findings, counts, context) = run_all_analyses(&tree);
 
@@ -99,7 +119,7 @@ fn run_scan_with_record(
     let duration_ms = start.elapsed().as_millis();
 
     // Stage 7: Build report
-    let report = ScanReport::build(file_record, findings, score, level, counts, duration_ms);
+    let report = ScanReport::build(file_record, findings, score, level, counts, duration_ms, file_tree);
 
     Ok((report, context, tree))
 }
