@@ -253,114 +253,141 @@ Downloads a file from R2, scans it, and returns the full JSON report.
 
 ## 7. Deploy on Cloudflare Containers
 
-The server mode is designed to run as a **Cloudflare Container** triggered by a Worker via internal binding.
+The server mode is designed to run as a **Cloudflare Container** — an on-demand, serverless container spawned by a [Worker](https://developers.cloudflare.com/workers/) through a [Durable Object](https://developers.cloudflare.com/durable-objects/) binding.
 
-### Step 1 — Build the Docker image
+Everything is pre-configured in the repository:
 
-```dockerfile
-# Dockerfile
-FROM rust:1.76-slim AS builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
-
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-WORKDIR /app
-COPY --from=builder /app/target/release/vrcstorage-scanner .
-EXPOSE 8080
-CMD ["./vrcstorage-scanner", "serve", "--port", "8080"]
 ```
-
-```bash
-docker build -t vrcstorage-scanner:latest .
-```
-
-### Step 2 — Configure `wrangler.toml`
-
-Add a `containers` binding to your Worker's configuration:
-
-```toml
-# wrangler.toml (in your Cloudflare Worker project)
-name = "vrcstorage-worker"
-main = "src/index.ts"
-compatibility_date = "2025-01-01"
-
-[[containers]]
-name = "scanner"
-image = "vrcstorage-scanner:latest"
-max_instances = 3
-
-[containers.scaling]
-min_instances = 0
-max_instances = 3
-```
-
-### Step 3 — Call the scanner from your Worker
-
-```typescript
-// src/index.ts
-export interface Env {
-  scanner: Container;
-}
-
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const { r2_url, file_id, expected_sha256 } = await request.json();
-
-    // Route to the container's /scan endpoint
-    const scanRes = await env.scanner.fetch("http://scanner/scan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ r2_url, file_id, expected_sha256 }),
-    });
-
-    const result = await scanRes.json();
-
-    // Reject Critical packages at the Worker level
-    if (result.scan_result?.risk?.level === "Critical") {
-      return Response.json(
-        { error: "Package rejected — critical risk detected", scan: result },
-        { status: 422 }
-      );
-    }
-
-    return Response.json(result);
-  },
-};
-```
-
-### Step 4 — Deploy
-
-```bash
-# Push the container image to Cloudflare's registry
-wrangler containers push vrcstorage-scanner:latest
-
-# Deploy the Worker + Container binding
-wrangler deploy
+vrchat-analyzer/
+├── Dockerfile              ← multi-stage Rust build → minimal runtime image
+├── .dockerignore           ← excludes target/, tests/, worker/ from build context
+├── wrangler.jsonc          ← Container + Worker + Durable Object config
+└── worker/
+    ├── package.json        ← @cloudflare/containers + wrangler
+    ├── tsconfig.json
+    └── src/
+        └── index.ts        ← ScannerContainer class + fetch handler
 ```
 
 ### Architecture
 
 ```
-Upload flow
-───────────
-Browser / API client
+Client / API
       │
-      ▼ POST /upload
-Cloudflare Worker
-      │  (R2 pre-signed URL passed to scanner)
-      ▼ POST http://scanner/scan
-vrcstorage-scanner Container
-      │  (downloads from R2, runs full pipeline)
-      ▼ JSON ScanReport
-Cloudflare Worker
-      │  (decides publish / reject / hold for review)
+      ▼ HTTPS request
+Cloudflare Worker (TypeScript)
+      │  ScannerContainer extends Container
+      │  └─ getContainer(env.SCANNER, id).fetch(request)
       ▼
-Response to client
+Durable Object (runs ScannerContainer class)
+      │  Manages container lifecycle (start, sleep, stop)
+      ▼  HTTP on defaultPort 8080
+vrcstorage-scanner Container (Rust / axum)
+      │  Downloads file from R2 via reqwest
+      │  Runs full analysis pipeline in memory
+      │  Returns JSON / TXT / sanitized .unitypackage bytes
 ```
 
-> **Note:** The container never stores files to disk. All analysis runs fully in memory, making it safe and stateless for multi-instance scaling.
+### How it works
+
+1. The Worker receives a request and calls `getContainer(env.SCANNER, "singleton").fetch(request)`.
+2. Under the hood, Cloudflare spins up a **Durable Object** instance for `ScannerContainer`.
+3. The Durable Object starts the container image (cold start ~1–3 s, then warm).
+4. Requests are forwarded to the container's **port 8080**, where the axum server listens.
+5. The container downloads the file from R2 (via `reqwest`, requiring `enableInternet: true`), runs the scan fully in memory, and returns the result.
+6. After the idle timeout (`sleepAfter: "10m"`), the container receives `SIGTERM` and shuts down gracefully.
+
+### Step 1 — Install dependencies
+
+```bash
+npm install
+```
+
+### Step 2 — Deploy
+
+```bash
+# Build Docker image, push to Cloudflare Registry, and deploy Worker + Container
+npx wrangler deploy
+```
+
+Wrangler automatically:
+- Builds the Docker image using the `Dockerfile` at the repo root.
+- Pushes it to Cloudflare's managed container registry (backed by R2).
+- Deploys the Worker and configures the Durable Object binding.
+
+> **Note:** The first deploy takes several minutes while the container is provisioned across Cloudflare's network. Subsequent deploys reuse cached image layers and are much faster.
+
+### Check deployment status
+
+```bash
+npx wrangler containers list        # list deployed containers
+npx wrangler containers images list # list images in registry
+```
+
+### Local testing
+
+Run the axum server directly (no Docker, no Worker):
+
+```bash
+cargo run -- serve --port 8080
+```
+
+Then hit `http://localhost:8080/gui` for the interactive test console.
+
+### Key configuration details
+
+**`worker/src/index.ts`** — The `ScannerContainer` class:
+
+```typescript
+import { Container, getContainer } from "@cloudflare/containers";
+
+export class ScannerContainer extends Container {
+  defaultPort = 8080;        // axum listens here
+  sleepAfter = "10m";        // keep alive 10 min after last request
+  enableInternet = true;     // REQUIRED: container must download from R2
+}
+```
+
+**`wrangler.jsonc`** — Container + Durable Object binding:
+
+```jsonc
+{
+  "containers": [
+    {
+      "class_name": "ScannerContainer",
+      "image": "./Dockerfile",
+      "max_instances": 5,
+      "instance_type": "standard-2"   // 6 GiB RAM, handles 500 MB packages in memory
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "class_name": "ScannerContainer", "name": "SCANNER" }
+    ]
+  },
+  "migrations": [
+    { "new_sqlite_classes": ["ScannerContainer"], "tag": "v1" }
+  ]
+}
+```
+
+### Instance sizing
+
+| Instance type | RAM | vCPU | Suitable for |
+|---|---|---|---|
+| `lite` | 256 MiB | 1/16 | Small C# files only |
+| `standard-1` | 4 GiB | 1/2 | Medium packages (< 100 MB) |
+| `standard-2` ★ | 6 GiB | 1 | Large packages (up to 500 MB) |
+| `standard-3` | 8 GiB | 2 | Heavy concurrent scanning |
+
+★ default for this project
+
+### Limitations
+
+- **Disk is ephemeral**: the container gets a fresh filesystem on every cold start. This project stores nothing on disk — all analysis runs in memory.
+- **No inbound TCP/UDP from end users**: only HTTP requests proxied through the Worker reach the container.
+- **`enableInternet` must be `true`**: otherwise `reqwest` cannot download files from R2.
+- **Image must be `linux/amd64`**: the Rust binary is cross-compiled automatically in the Docker build.
 
 ---
 

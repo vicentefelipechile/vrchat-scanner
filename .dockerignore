@@ -1,0 +1,7 @@
+target/
+.git/
+tests/fixtures/
+benchmarks/
+worker/
+*.md
+.gitignore

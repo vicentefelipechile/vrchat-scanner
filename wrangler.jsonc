@@ -1,0 +1,30 @@
+{
+  "name": "vrcstorage-scanner",
+  "main": "./worker/src/index.ts",
+  "compatibility_date": "2026-04-29",
+  "containers": [
+    {
+      "class_name": "ScannerContainer",
+      "image": "./Dockerfile",
+      "max_instances": 5,
+      "instance_type": "standard-2"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "ScannerContainer",
+        "name": "SCANNER"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "new_sqlite_classes": ["ScannerContainer"],
+      "tag": "v1"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

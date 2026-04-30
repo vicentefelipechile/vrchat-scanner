@@ -1,0 +1,15 @@
+{
+  "name": "vrcstorage-scanner-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}
