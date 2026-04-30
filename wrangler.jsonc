@@ -25,6 +25,12 @@
 			"migrations_dir": "./worker/migrations"
 		}
 	],
+	"r2_buckets": [
+		{
+			"binding": "UPLOAD_BUCKET",
+			"bucket_name": "vrcstorage-uploads"
+		}
+	],
 	"durable_objects": {
 		"bindings": [
 			{

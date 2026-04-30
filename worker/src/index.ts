@@ -4,15 +4,21 @@
 // Cloudflare Worker entry point for the vrcstorage-scanner service.
 //
 // Responsibilities:
-// - POST /api/scan       → VirusTotal-style cache check (D1) then forward to container
-// - POST /api/sanitize    → Forward to container
-// - POST /api/scan-batch  → Forward to container
-// - GET  /api/health      → Forward to container
-// - GET  /api/cache-stats → Read directly from D1
+// - POST /api/upload       → Multipart file upload → R2 → return URL for scanning
+// - GET  /api/download/:hash → Serve uploaded file from R2 (for container download)
+// - POST /api/scan          → VirusTotal-style cache check (D1) then forward to container
+// - POST /api/sanitize      → Forward to container
+// - POST /api/scan-batch    → Forward to container
+// - GET  /api/health        → Forward to container
+// - GET  /api/cache-stats   → Read directly from D1
+// - GET  /api/history       → Paginated scan history from D1
+// - GET  /api/history/:hash → Full scan detail by SHA-256
+// - GET  /api/search?q=     → Search by hash or filename
+// - GET  /api/stats         → Global platform statistics
 //
 // All API routes live under /api/*.  The Worker strips the /api prefix
 // before forwarding to the container (which exposes /scan, /sanitize, etc.).
-// Non-API routes (/, /app.css, /app.js, …) are served by Cloudflare Static
+// Non-API routes (/, /app.css, /app.js, ...) are served by Cloudflare Static
 // Assets configured in wrangler.jsonc.
 //
 // Cache flow (POST /api/scan):
@@ -22,6 +28,7 @@
 //                cache MISS → forward request to the Rust container.
 //   3. After the container responds (HTTP 200), store the result in D1
 //      via ctx.waitUntil() so the next identical request is a HIT.
+//   4. Also store in permanent `scans` table for history/search.
 //
 // The container runs the full scan pipeline (axum server on port 8080) and
 // requires outbound internet access (`enableInternet: true`) to download
@@ -35,6 +42,8 @@
 import { Hono } from 'hono';
 import { Container, getContainer } from '@cloudflare/containers';
 import { buildCacheKey, getCachedScan, getCacheStats, putCachedScan } from './cache';
+import { getScanHistory, getScanByHash, searchScans, putScanResult, getStats } from './history';
+import { handleUpload, serveDownload, cleanupUpload } from './upload';
 
 // =========================================================================================================
 // Container class
@@ -83,14 +92,63 @@ function extractQueryParams(url: URL) {
 	};
 }
 
+/**
+ * Extracts counts by severity and overall finding count from a parsed
+ * ScanReport JSON object.  Used to populate the scans table with summary
+ * columns so the history list can show them without parsing full JSON.
+ */
+function countFindingsBySeverity(scanResult: any) {
+	let critical = 0, high = 0, medium = 0, low = 0;
+	const findings = scanResult?.findings ?? [];
+	for (const f of findings) {
+		const s = String(f.severity || '').toLowerCase();
+		if (s === 'critical') critical++;
+		else if (s === 'high') high++;
+		else if (s === 'medium') medium++;
+		else if (s === 'low') low++;
+	}
+	return { total: findings.length, critical, high, medium, low };
+}
+
 // =========================================================================================================
 // App
 // =========================================================================================================
 
 const app = new Hono<{ Bindings: Env }>();
 
+// ── POST /api/upload ─────────────────────────────────────────────────────────
+// Receives a file via multipart/form-data, stores it in R2 temporarily,
+// and returns a download URL + metadata for scanning.
+
+app.post('/api/upload', async (c) => {
+	const result = await handleUpload(c.req.raw, c.env.UPLOAD_BUCKET);
+
+	if (result.error) {
+		return c.json({ error: result.error, ok: false }, 400);
+	}
+
+	return c.json({
+		url: result.url,
+		sha256: result.sha256,
+		file_id: result.sha256,
+		filename: result.filename,
+		file_size: result.file_size,
+		ok: true,
+	});
+});
+
+// ── GET /api/download/:hash ──────────────────────────────────────────────────
+// Serves an uploaded file from R2 so the container can download it via reqwest.
+// The container calls this URL when scanning an uploaded file.
+
+app.get('/api/download/:hash', async (c) => {
+	const hash = c.req.param('hash');
+	return serveDownload(c.env.UPLOAD_BUCKET, hash);
+});
+
 // ── POST /api/scan ───────────────────────────────────────────────────────────
 // VirusTotal-style caching: check D1 before forwarding to the container.
+// Also stores results in the permanent `scans` table for history.
 
 app.post('/api/scan', async (c) => {
 	const params = extractQueryParams(new URL(c.req.url));
@@ -100,9 +158,10 @@ app.post('/api/scan', async (c) => {
 	const raw = c.req.raw;
 	const cloned = raw.clone();
 
+	let body: any;
 	let expectedSha256: string | undefined;
 	try {
-		const body: any = await cloned.json();
+		body = await cloned.json();
 		expectedSha256 = body.expected_sha256;
 	} catch {
 		return proxyToContainer(c);
@@ -151,8 +210,11 @@ app.post('/api/scan', async (c) => {
 					const parsed = JSON.parse(resultJson);
 					const sha256 = parsed?.scan_result?.file?.sha256;
 					const riskLevel = parsed?.scan_result?.risk?.level || 'UNKNOWN';
+					const score = parsed?.scan_result?.risk?.score ?? 0;
+					const durationMs = parsed?.scan_result?.scan_duration_ms ?? 0;
 
 					if (sha256) {
+						// Store in scan_cache (D1, 30-day TTL)
 						const cacheKey = buildCacheKey(
 							sha256,
 							params.format,
@@ -168,6 +230,38 @@ app.post('/api/scan', async (c) => {
 							parsed.file_id || '',
 							riskLevel,
 						);
+
+						// Store in permanent scans history table
+						const counts = countFindingsBySeverity(parsed.scan_result);
+						const fileTreeJson = parsed.scan_result?.file_tree
+							? JSON.stringify(parsed.scan_result.file_tree)
+							: undefined;
+
+						// Extract filename and size from the scan report
+						const filename = parsed.scan_result?.file?.path || sha256;
+						const fileSize = parsed.scan_result?.file?.size ?? 0;
+
+						// Build a result JSON that includes the full scan result
+						// with finding counts at the top level for easy display
+						const historyResult = JSON.stringify({
+							...parsed.scan_result,
+							_counts: counts,
+						});
+
+						await putScanResult(
+							c.env.SCAN_CACHE_DB,
+							sha256,
+							filename,
+							fileSize,
+							historyResult,
+							riskLevel,
+							score,
+							durationMs,
+							fileTreeJson,
+						);
+
+						// Clean up the temporary R2 upload if it came from /api/upload
+						await cleanupUpload(c.env.UPLOAD_BUCKET, sha256);
 					}
 				} catch {
 					// Silently skip caching on parse errors — the scan
@@ -209,6 +303,54 @@ app.get('/api/health', proxyToContainer);
 app.get('/api/cache-stats', async (c) => {
 	const stats = await getCacheStats(c.env.SCAN_CACHE_DB);
 	return c.json(stats);
+});
+
+// ── GET /api/history ────────────────────────────────────────────────────────
+// Paginated list of past scans.  Query params: page, limit, risk.
+
+app.get('/api/history', async (c) => {
+	const page = parseInt(c.req.query('page') || '1', 10);
+	const limit = parseInt(c.req.query('limit') || '25', 10);
+	const risk = c.req.query('risk');
+
+	const result = await getScanHistory(c.env.SCAN_CACHE_DB, page, limit, risk || undefined);
+	return c.json({ ...result, ok: true });
+});
+
+// ── GET /api/history/:sha256 ────────────────────────────────────────────────
+// Full scan detail by SHA-256 hash.
+
+app.get('/api/history/:sha256', async (c) => {
+	const sha256 = c.req.param('sha256').toLowerCase();
+	const detail = await getScanByHash(c.env.SCAN_CACHE_DB, sha256);
+
+	if (!detail) {
+		return c.json({ error: 'Scan not found', ok: false }, 404);
+	}
+
+	return c.json({ ...detail, ok: true });
+});
+
+// ── GET /api/search ─────────────────────────────────────────────────────────
+// Search by hash prefix or filename substring.  Query param: q.
+
+app.get('/api/search', async (c) => {
+	const query = c.req.query('q') || '';
+
+	if (!query.trim()) {
+		return c.json({ results: [], ok: true });
+	}
+
+	const results = await searchScans(c.env.SCAN_CACHE_DB, query);
+	return c.json({ results, ok: true });
+});
+
+// ── GET /api/stats ──────────────────────────────────────────────────────────
+// Global platform statistics.
+
+app.get('/api/stats', async (c) => {
+	const stats = await getStats(c.env.SCAN_CACHE_DB);
+	return c.json({ ...stats, ok: true });
 });
 
 // =========================================================================================================

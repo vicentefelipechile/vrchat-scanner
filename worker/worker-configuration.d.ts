@@ -9,6 +9,7 @@ declare namespace Cloudflare {
 	interface Env {
 		SCAN_CACHE_DB: D1Database;
 		SCANNER: DurableObjectNamespace<import("./src/index").ScannerContainer>;
+		UPLOAD_BUCKET: R2Bucket;
 	}
 }
 interface Env extends Cloudflare.Env {}
