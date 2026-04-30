@@ -45,7 +45,7 @@ executing the content.
 | Drag-and-drop (folder) | `vrcstorage-scanner <FOLDER>` | Recursive scan of a directory |
 | HTTP server | `vrcstorage-scanner serve --port 8080` | Cloudflare Containers (R2 download) |
 
-**Server endpoints:** `POST /scan`, `POST /sanitize`, `POST /scan-batch`, `GET /health`.
+**Server endpoints:** `POST /scan`, `POST /sanitize`, `POST /scan-batch`, `GET /health`, `GET /gui`.
 Supports `?format=txt`, `?verbose=true`, `?min_severity=high` query params.
 Sanitize returns cleaned `.unitypackage` bytes with metadata in headers.
 Batch scan accepts an array of files and returns aggregate results.
@@ -155,6 +155,16 @@ vrcstorage-scanner/
 │
 └── benches/
     └── scan_performance.rs     ← benchmarks with criterion
+│
+├── Dockerfile                  ← multi-stage Rust build → slim runtime image
+├── .dockerignore               ← excludes target/, tests/, worker/ from Docker build context
+├── wrangler.jsonc              ← Cloudflare Container + Worker + Durable Object binding config
+│
+└── worker/                     ← Cloudflare Worker (TypeScript) — deploys alongside the container
+    ├── package.json            ← @cloudflare/containers + wrangler
+    ├── tsconfig.json           ← TypeScript config for Workers
+    └── src/
+        └── index.ts            ← ScannerContainer class (Container subclass) + fetch handler
 ```
 
 ---
@@ -1293,12 +1303,153 @@ Without `trim_start_matches('\u{FEFF}')` applied before the `#` check, a file th
 `#if UNITY_EDITOR` on byte 0 will not be recognized as a directive, causing the entire file
 to be treated as active code and generating false positives.
 
+### ❌ Adding Cloudflare Container deployment files to the wrong directories
+
+All deployment files except Worker code live at the **repo root**, not inside `worker/`:
+
+| File | Correct location | Reason |
+|---|---|---|
+| `Dockerfile` | `./Dockerfile` | Wrangler builds the image from the root — needs access to `Cargo.toml` and `src/` |
+| `.dockerignore` | `./.dockerignore` | Must be in the Docker build context root |
+| `wrangler.jsonc` | `./wrangler.jsonc` | Wrangler runs from the repo root; `main` points to `./worker/src/index.ts` |
+| Worker code | `./worker/src/index.ts` | Isolated from Rust code; referenced via `"main": "./worker/src/index.ts"` in wrangler config |
+
+### ❌ Forgetting `enableInternet: true` in the Container class
+
+Without `enableInternet = true` on the `ScannerContainer` class, the container cannot make
+outbound HTTP requests. Every `/scan` and `/sanitize` request will fail because `reqwest`
+cannot download the file from R2. This is a silent failure — the container starts normally
+but downloads time out.
+
+### ❌ Using `docker run` locally to test the Cloudflare Container deployment
+
+The Docker image is designed to be built and pushed automatically by `wrangler deploy`, not
+run manually. The container expects R2 pre-signed URLs (external internet access) and forwards
+requests through a Worker. For local testing of the axum server, use:
+```bash
+cargo run -- serve --port 8080
+```
+This starts the same server directly without Docker or Worker dependencies.
+
 ---
 
 ## 11. Server Mode (Cloudflare Containers)
 
-The scanner ships an **axum** HTTP server designed to run inside a Cloudflare Container, called
-by a Worker when a new upload arrives.
+The scanner ships an **axum** HTTP server designed to run inside a **Cloudflare Container**.
+Containers are deployed alongside a **Worker** (TypeScript) via `wrangler deploy` and are backed
+by **Durable Objects** for instance lifecycle management.
+
+### Deployment architecture
+
+```
+Client / API
+      │  HTTPS request
+      ▼
+Cloudflare Worker (worker/src/index.ts)
+      │  ScannerContainer extends Container
+      │  getContainer(env.SCANNER, id).fetch(request)
+      ▼
+Durable Object (runs ScannerContainer class)
+      │  Manages container lifecycle (start → sleepAfter → SIGTERM)
+      ▼  HTTP on defaultPort 8080
+vrcstorage-scanner Container (Rust / axum)
+      │  Downloads from R2 via reqwest
+      │  Runs pipeline fully in memory
+      └─ Returns JSON / TXT / sanitized .unitypackage bytes
+```
+
+### Deployment files
+
+All deployment files live at the repo root except the Worker code which is under `worker/`:
+
+| File | Purpose |
+|---|---|
+| `Dockerfile` | Multi-stage build: compiles Rust in `rust:1.84-slim-bookworm`, runtime in `debian:bookworm-slim` with `ca-certificates` |
+| `.dockerignore` | Excludes `target/`, `.git/`, `tests/fixtures/`, `worker/` from Docker build context |
+| `wrangler.jsonc` | Declares `ScannerContainer` with `instance_type: "standard-2"` (6 GiB RAM), `max_instances: 5`, Durable Object binding, SQLite migrations, observability enabled |
+| `worker/package.json` | Dependencies: `@cloudflare/containers`, `wrangler` (dev) |
+| `worker/tsconfig.json` | TypeScript config targeting ES2022 with bundler module resolution |
+| `worker/src/index.ts` | `ScannerContainer` class with `defaultPort: 8080`, `enableInternet: true`, `sleepAfter: "10m"` |
+
+### Worker code (`worker/src/index.ts`)
+
+```typescript
+import { Container, getContainer } from "@cloudflare/containers";
+
+export class ScannerContainer extends Container {
+  defaultPort = 8080;        // axum listens here
+  sleepAfter = "10m";        // idle timeout before graceful shutdown
+  enableInternet = true;     // REQUIRED: container must download files from R2
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const container = getContainer(env.SCANNER, "singleton");
+    return container.fetch(request);  // forwards to /scan, /sanitize, /batch, /health, /gui
+  },
+};
+
+interface Env {
+  SCANNER: DurableObjectNamespace<ScannerContainer>;
+}
+```
+
+### `wrangler.jsonc` structure
+
+```jsonc
+{
+  "name": "vrcstorage-scanner",
+  "main": "./worker/src/index.ts",
+  "containers": [
+    {
+      "class_name": "ScannerContainer",
+      "image": "./Dockerfile",
+      "max_instances": 5,
+      "instance_type": "standard-2"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "ScannerContainer", "name": "SCANNER" }]
+  },
+  "migrations": [
+    { "new_sqlite_classes": ["ScannerContainer"], "tag": "v1" }
+  ],
+  "observability": { "enabled": true }
+}
+```
+
+### Key invariants for Cloudflare Containers
+
+1. **`enableInternet: true` is mandatory.** The container uses `reqwest` to download files from
+   R2 pre-signed URLs. Without outbound internet access, every `/scan` and `/sanitize` request
+   will fail.
+2. **`image` must produce `linux/amd64`.** The `Dockerfile` builds natively for this target.
+3. **Binary is pre-compiled in the image.** The Dockerfile is multi-stage — compilation happens
+   once during `wrangler deploy`, not on every container start. Cold starts (~1–3 s) only run
+   `./vrcstorage-scanner serve --port 8080`.
+4. **Disk is ephemeral.** Cloudflare Containers get a fresh filesystem on every cold start.
+   This project never writes to disk — all analysis runs in memory. No changes needed.
+5. **SIGTERM is handled.** The axum server's `shutdown_signal()` catches both `Ctrl+C` and
+   `SIGTERM` for graceful shutdown when the container sleeps.
+6. **Instance sizing.** `standard-2` (6 GiB RAM) is the default — sufficient for packages up to
+   the 500 MB download limit. Scale up to `standard-3` (8 GiB) or `standard-4` (12 GiB) for
+   heavier concurrent workloads.
+
+### Deploy commands
+
+```bash
+cd worker && npm install && cd ..
+npx wrangler deploy                      # builds Docker image, pushes to registry, deploys Worker
+npx wrangler containers list              # verify deployment status
+npx wrangler containers images list       # list images in Cloudflare Registry
+```
+
+### Local testing (no Docker, no Worker)
+
+```bash
+cargo run -- serve --port 8080            # starts axum server directly
+# Open http://localhost:8080/gui          # interactive test console
+```
 
 ### Endpoints
 
