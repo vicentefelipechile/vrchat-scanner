@@ -217,15 +217,6 @@ app.get('/api/cache-stats', async (c) => {
 
 export default app;
 
-// =========================================================================================================
-// Bindings
-// =========================================================================================================
-
-interface Env {
-	SCANNER: DurableObjectNamespace<ScannerContainer>;
-	SCAN_CACHE_DB: D1Database;
-}
-
 /**
  * Shorthand for the Hono context with our bindings.
  */
