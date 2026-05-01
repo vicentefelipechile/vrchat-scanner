@@ -46,13 +46,19 @@ executing the content.
 | Drag-and-drop (folder) | `vrcstorage-scanner <FOLDER>` | Recursive scan of a directory |
 | HTTP server | `vrcstorage-scanner serve --port 8080` | Cloudflare Containers (R2 download) |
 
-**Server endpoints:** `POST /api/scan`, `POST /api/sanitize`, `POST /api/scan-batch`, `GET /api/health`, `GET /api/cache-stats`.
+**Server endpoints:** `POST /api/upload`, `GET /api/download/:hash`, `POST /api/scan`, `POST /api/sanitize`, `POST /api/scan-batch`, `GET /api/health`, `GET /api/cache-stats`, `GET /api/history`, `GET /api/history/:sha256`, `GET /api/search?q=`, `GET /api/stats`.
 Worker applies cache logic (D1) on `/api/scan` and proxies other routes to the container
 (stripping the `/api` prefix). A vanilla SPA is served from `worker/public/` via Cloudflare
 Static Assets (`not_found_handling: "single-page-application"`).
 Supports `?format=txt`, `?verbose=true`, `?min_severity=high` query params.
 Sanitize returns cleaned `.unitypackage` bytes with metadata in headers.
 Batch scan accepts an array of files and returns aggregate results.
+
+**Web platform features (VirusTotal-style):**
+- **File upload:** Users can drag-and-drop or browse for files. SHA-256 is computed in-browser via Web Crypto API. The file is uploaded to a temporary R2 bucket, then scanned via the existing URL-based pipeline. R2 objects are auto-cleaned after scan completes.
+- **Persistent history:** Scan results are stored permanently in D1 (`scans` table) alongside the existing `scan_cache` (30-day TTL). History is paginated, filterable by risk level, and searchable by hash or filename.
+- **Search:** Global search bar in the sidebar supports hash prefix and filename substring search. Exact 64-char hex hashes navigate directly to the detail page.
+- **Detail page:** VirusTotal-style file detail view showing full findings with severity filters, collapsible raw JSON, file tree rendering, risk score, and severity breakdown.
 
 ---
 
@@ -173,10 +179,13 @@ vrcstorage-scanner/
     │   ├── app.css             ← Dark theme, responsive, monospace
     │   └── app.js              ← fetch calls to /api/*, JSON rendering, auto-download sanitize
     ├── migrations/             ← D1 migration SQL files
-    │   └── 0001_create_scan_cache.sql  ← scan_cache table + indexes
+    │   ├── 0001_create_scan_cache.sql  ← scan_cache table + indexes
+    │   └── 0002_create_scans.sql       ← scans table for persistent history
     └── src/
         ├── index.ts            ← Hono app: routes under /api/*, container proxy, cache intercept
-        └── cache.ts            ← D1 query helpers: getCachedScan, putCachedScan, getCacheStats
+        ├── cache.ts            ← D1 query helpers: getCachedScan, putCachedScan, getCacheStats
+        ├── history.ts          ← D1 query helpers: getScanHistory, getScanByHash, searchScans, putScanResult, getStats
+        └── upload.ts           ← R2 upload handler + download serve + cleanup
 ```
 
 ---
@@ -1364,12 +1373,18 @@ Client / SPA (browser)
       │  HTTPS request
       ▼
 Cloudflare Worker (worker/src/index.ts — Hono)
-      │  /api/scan       → D1 cache check → proxy to container: /scan
-      │  /api/sanitize   → proxy to container: /sanitize
-      │  /api/scan-batch → proxy to container: /scan-batch
-      │  /api/health     → proxy to container: /health
-      │  /api/cache-stats→ D1 directo (sin container)
-      │  /*              → Cloudflare Static Assets → SPA
+      │  /api/upload      → Parse multipart → R2.put → return download URL
+      │  /api/download/:h → Serve file from R2 to container
+      │  /api/scan        → D1 cache check → proxy to container: /scan
+      │  /api/sanitize    → proxy to container: /sanitize
+      │  /api/scan-batch  → proxy to container: /scan-batch
+      │  /api/health      → proxy to container: /health
+      │  /api/cache-stats → D1 direct (no container)
+      │  /api/history     → D1 paginated scan list
+      │  /api/history/:sha→ D1 full scan detail
+      │  /api/search?q=   → D1 hash/filename search
+      │  /api/stats       → D1 global statistics
+      │  /*               → Cloudflare Static Assets → SPA
       ▼
 ScannerContainer (Durable Object, runs Docker container)
       │  Manages container lifecycle (start → sleepAfter → SIGTERM)
@@ -1393,6 +1408,8 @@ All deployment files live at the repo root except the Worker code which is under
 | `worker/tsconfig.json` | TypeScript config targeting ES2022 with bundler module resolution; types from `./worker-configuration.d.ts` |
 | `worker/src/index.ts` | Hono app with `ScannerContainer` class, `/api/*` routes, cache intercept on `/api/scan` |
 | `worker/src/cache.ts` | D1 query helpers: `getCachedScan`, `putCachedScan`, `getCacheStats`, `buildCacheKey` |
+| `worker/src/history.ts` | D1 query helpers for persistent history: `getScanHistory`, `getScanByHash`, `searchScans`, `putScanResult`, `getStats` |
+| `worker/src/upload.ts` | R2 upload handler: multipart parse, SHA-256 validation, temporary store, download serve, cleanup |
 | `worker/migrations/0001_create_scan_cache.sql` | DDL for `scan_cache` table — applied via `wrangler d1 migrations apply` |
 
 ### Worker code (`worker/src/index.ts`)
@@ -1401,6 +1418,8 @@ All deployment files live at the repo root except the Worker code which is under
 import { Hono } from 'hono';
 import { Container, getContainer } from '@cloudflare/containers';
 import { buildCacheKey, getCachedScan, putCachedScan } from './cache';
+import { getScanHistory, getScanByHash, searchScans, putScanResult, getStats } from './history';
+import { handleUpload, serveDownload, cleanupUpload } from './upload';
 
 export class ScannerContainer extends Container {
   defaultPort = 8080;
@@ -1410,6 +1429,18 @@ export class ScannerContainer extends Container {
 
 const app = new Hono<{ Bindings: Env }>();
 
+// POST /api/upload — Receive file via multipart, store in R2, return download URL
+app.post('/api/upload', async (c) => {
+  const result = await handleUpload(c.req.raw, c.env.UPLOAD_BUCKET);
+  if (result.error) return c.json({ error: result.error, ok: false }, 400);
+  return c.json({ url: result.url, sha256: result.sha256, file_id: result.sha256, filename: result.filename, file_size: result.file_size, ok: true });
+});
+
+// GET /api/download/:hash — Serve uploaded file from R2 for container download
+app.get('/api/download/:hash', async (c) => {
+  return serveDownload(c.env.UPLOAD_BUCKET, c.req.param('hash'));
+});
+
 // POST /api/scan — VirusTotal-style cache check before forwarding to container
 app.post('/api/scan', async (c) => {
   const raw = c.req.raw;
@@ -1417,17 +1448,33 @@ app.post('/api/scan', async (c) => {
   const body = await cloned.json();
   const sha256 = body.expected_sha256;
   // … cache HIT → return cached JSON; cache MISS → proxy to container, store result
+  // Also stores in permanent `scans` table via putScanResult()
+  // Cleans up R2 temporary upload via cleanupUpload()
 });
 
-// POST /api/sanitize, /api/scan-batch, GET /api/health — proxied directly
-app.post('/api/sanitize', proxyToContainer);
-app.post('/api/scan-batch', proxyToContainer);
-app.get('/api/health', proxyToContainer);
+// GET /api/history — Paginated scan list
+app.get('/api/history', async (c) => {
+  const result = await getScanHistory(c.env.SCAN_CACHE_DB, page, limit, risk);
+  return c.json({ ...result, ok: true });
+});
 
-// GET /api/cache-stats — D1 directo, sin container
-app.get('/api/cache-stats', async (c) => {
-  const stats = await getCacheStats(c.env.SCAN_CACHE_DB);
-  return c.json(stats);
+// GET /api/history/:sha256 — Full scan detail
+app.get('/api/history/:sha256', async (c) => {
+  const detail = await getScanByHash(c.env.SCAN_CACHE_DB, sha256);
+  if (!detail) return c.json({ error: 'Scan not found', ok: false }, 404);
+  return c.json({ ...detail, ok: true });
+});
+
+// GET /api/search?q= — Search by hash or filename
+app.get('/api/search', async (c) => {
+  const results = await searchScans(c.env.SCAN_CACHE_DB, query);
+  return c.json({ results, ok: true });
+});
+
+// GET /api/stats — Global platform statistics
+app.get('/api/stats', async (c) => {
+  const stats = await getStats(c.env.SCAN_CACHE_DB);
+  return c.json({ ...stats, ok: true });
 });
 
 export default app;
@@ -1439,7 +1486,7 @@ export default app;
 ### SPA (`worker/public/`)
 
 Single Page Application served via Cloudflare Static Assets. Built with vanilla HTML/CSS/JS.
-Tabs: **Scan** (R2 URL input), **Sanitize**, **Batch**, **Cache Stats**, **Health**.
+Tabs: **Upload** (drag-and-drop file upload), **History** (paginated scan list + risk filter), **Stats** (global platform metrics + risk distribution bars), **Scan URL** (R2 URL input), **Sanitize**, **Batch**, **Cache Stats**, **Health**. Global search bar in the sidebar supports hash prefix and filename search. Detail view shows full findings with severity filter buttons, collapsible raw JSON, and file tree rendering.
 
 `wrangler.jsonc` config:
 ```jsonc
@@ -1479,7 +1526,31 @@ CREATE INDEX IF NOT EXISTS idx_scan_cache_sha256  ON scan_cache(sha256);
 CREATE INDEX IF NOT EXISTS idx_scan_cache_created ON scan_cache(created_at);
 ```
 
-Applied with: `npx wrangler d1 migrations apply vrcstorage-scan-cache`
+### D1 schema — persistent history (`worker/migrations/0002_create_scans.sql`)
+
+```sql
+CREATE TABLE IF NOT EXISTS scans (
+    sha256           TEXT PRIMARY KEY,
+    filename         TEXT NOT NULL,
+    file_size        INTEGER NOT NULL,
+    upload_date      INTEGER NOT NULL,
+    risk_level       TEXT NOT NULL,
+    total_score      INTEGER NOT NULL,
+    duration_ms      INTEGER NOT NULL,
+    result_json      TEXT NOT NULL,
+    file_tree_json   TEXT,
+    finding_count    INTEGER DEFAULT 0,
+    critical_count   INTEGER DEFAULT 0,
+    high_count       INTEGER DEFAULT 0,
+    medium_count     INTEGER DEFAULT 0,
+    low_count        INTEGER DEFAULT 0,
+    access_count     INTEGER DEFAULT 1,
+    last_accessed    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scans_date     ON scans(upload_date DESC);
+CREATE INDEX IF NOT EXISTS idx_scans_risk     ON scans(risk_level);
+CREATE INDEX IF NOT EXISTS idx_scans_filename ON scans(filename);
+```
 
 ### `wrangler.jsonc` structure
 
@@ -1500,6 +1571,12 @@ Applied with: `npx wrangler d1 migrations apply vrcstorage-scan-cache`
       "binding": "SCAN_CACHE_DB",
       "database_name": "vrcstorage-scan-cache",
       "database_id": "<FROM_WRANGLER_D1_CREATE>"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "UPLOAD_BUCKET",
+      "bucket_name": "vrcstorage-uploads"
     }
   ],
   "assets": {
@@ -1536,12 +1613,13 @@ Applied with: `npx wrangler d1 migrations apply vrcstorage-scan-cache`
 
 ```bash
 cd worker && npm install && cd ..
-npx wrangler d1 create vrcstorage-scan-cache        # creates D1 database — copy database_id to wrangler.jsonc
-npx wrangler d1 migrations apply vrcstorage-scan-cache  # applies schema
-npx wrangler types                                   # regenerates worker-configuration.d.ts
-npx wrangler deploy                                  # builds Docker image, pushes to registry, deploys Worker + SPA
-npx wrangler containers list                         # verify deployment status
-npx wrangler containers images list                  # list images in Cloudflare Registry
+npx wrangler r2 bucket create vrcstorage-uploads         # creates R2 bucket for file uploads
+npx wrangler d1 create vrcstorage-scan-cache             # creates D1 database — copy database_id to wrangler.jsonc
+npx wrangler d1 migrations apply vrcstorage-scan-cache   # applies schema (both 0001 and 0002)
+npx wrangler types                                        # regenerates worker-configuration.d.ts
+npx wrangler deploy                                       # builds Docker image, pushes to registry, deploys Worker + SPA
+npx wrangler containers list                              # verify deployment status
+npx wrangler containers images list                       # list images in Cloudflare Registry
 ```
 
 ### Local testing of the server (no Docker, no Worker)
@@ -1565,11 +1643,17 @@ cargo run -- serve --port 8080            # starts axum server directly
 
 | Method | Path | Description |
 |---|---|---|
+| `POST` | `/api/upload` | Multipart file upload → R2 → return download URL |
+| `GET` | `/api/download/:hash` | Serve uploaded file from R2 for container download |
 | `POST` | `/api/scan` | Cache check (D1) → proxy to container `/scan` |
 | `POST` | `/api/sanitize` | Proxy to container `/sanitize` |
 | `POST` | `/api/scan-batch` | Proxy to container `/scan-batch` |
 | `GET` | `/api/health` | Proxy to container `/health` |
 | `GET` | `/api/cache-stats` | Query D1 directly, no container |
+| `GET` | `/api/history` | Paginated scan list from D1 scans table |
+| `GET` | `/api/history/:sha256` | Full scan detail by SHA-256 from D1 |
+| `GET` | `/api/search?q=` | Search D1 scans by hash prefix or filename |
+| `GET` | `/api/stats` | Global platform statistics from D1 |
 | `GET` | `/*` | Cloudflare Static Assets → SPA |
 
 ### Worker → Container URL rewriting
@@ -1718,6 +1802,8 @@ requests are traced via `tower_http::TraceLayer`.
 |---|---|
 | `index.ts` | Hono app, routes, container proxy, cache intercept logic |
 | `cache.ts` | Pure functions for D1 queries (`getCachedScan`, `putCachedScan`, `getCacheStats`, `buildCacheKey`) |
+| `history.ts` | Pure functions for D1 queries (`getScanHistory`, `getScanByHash`, `searchScans`, `putScanResult`, `getStats`) |
+| `upload.ts` | R2 upload: multipart parse, SHA-256 validation, temporary store, download serve, cleanup |
 | `migrations/` | One `.sql` file per schema change, named `NNNN_description.sql` |
 | `public/` | SPA static files served by Cloudflare Static Assets |
 
@@ -1799,6 +1885,24 @@ The container knows nothing about `/api`. The Worker must rewrite the URL path:
 
 Run `npx wrangler d1 migrations apply` before `npx wrangler deploy`. Without it, the
 `scan_cache` table won't exist and cache queries will throw errors at runtime.
+
+#### ❌ Forgetting to create the R2 bucket before deploy
+
+The `UPLOAD_BUCKET` binding in `wrangler.jsonc` will fail at runtime if the bucket
+`vrcstorage-uploads` does not exist. Create it with `npx wrangler r2 bucket create vrcstorage-uploads`
+before deploying.
+
+#### ❌ Not including SHA-256 validation in upload
+
+The client SPA computes SHA-256 in-browser before upload. The Worker should also validate
+this hash by recomputing it server-side and comparing. If they mismatch, reject the upload
+(`handleUpload` in `upload.ts` does this).
+
+#### ❌ Not cleaning up R2 uploads after scan
+
+Uploaded files in R2 have a 1-hour lifecycle rule, but they should also be cleaned up
+immediately after the scan completes. The `/api/scan` handler calls `cleanupUpload()` in
+`ctx.waitUntil()` after storing the result. Without this, orphaned uploads accumulate.
 
 ---
 
