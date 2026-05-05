@@ -155,7 +155,7 @@ async function uploadAndScan() {
 			if (cacheJson.ok) {
 				window.uploadInProgress = false;
 				hideProgress();
-				navigate('/detail/' + uploadHash);
+				navigate('/file/' + uploadHash);
 				return;
 			}
 		}
@@ -187,6 +187,18 @@ async function uploadAndScan() {
 
 	const uploadId = startJson.upload_id;
 	const r2Key    = startJson.r2_key;
+
+	/**
+	 * Fire-and-forget: abort the R2 multipart session to free orphaned parts.
+	 * Called from every error path after the session is open.
+	 */
+	function abortR2Session() {
+		fetch('/api/upload/abort', {
+			method:  'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body:    JSON.stringify({ upload_id: uploadId, r2_key: r2Key }),
+		}).catch(function () {}); // best-effort: never block UI on this
+	}
 
 	// ── Step 3: Upload parts (semaphore — always CONCURRENCY parts in-flight) ─
 	const totalChunks = Math.max(1, Math.ceil(uploadFile.size / CHUNK_SIZE));
@@ -239,7 +251,7 @@ async function uploadAndScan() {
 	try {
 		const numWorkers = Math.min(CONCURRENCY, totalChunks);
 		await Promise.all(Array.from({ length: numWorkers }, worker));
-	} catch (e) { abortUpload('Network error: ' + e.message); return; }
+	} catch (e) { abortR2Session(); abortUpload('Network error: ' + e.message); return; }
 
 	// ── Step 4: Complete upload ───────────────────────────────────────────────
 	setProgress(83, 'Finalizing upload...');
@@ -258,29 +270,24 @@ async function uploadAndScan() {
 			}),
 		});
 		endJson = await endRes.json();
-		if (!endJson.ok) { abortUpload(endJson.error || 'Upload finalize failed'); return; }
-	} catch (e) { abortUpload('Network error: ' + e.message); return; }
+		if (!endJson.ok) { abortR2Session(); abortUpload(endJson.error || 'Upload finalize failed'); return; }
+	} catch (e) { abortR2Session(); abortUpload('Network error: ' + e.message); return; }
 
 	// ── Step 5: Scan ─────────────────────────────────────────────────────────
+	// Reuse the upload token — the user already proved they're human in Step 1.
+	// Fetching a second Turnstile token after reset() can deadlock the widget.
 	setProgress(88, 'Scanning...');
-	let scanToken;
-	try {
-		resetTurnstile();
-		scanToken = await getTurnstileToken();
-	} catch (e) { abortUpload('Verification failed: ' + e.message); return; }
-
 	setProgress(92, 'Analyzing package...');
 	try {
 		const scanRes = await fetch('/api/scan?format=json', {
 			method:  'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body:    JSON.stringify({
-				url:                   endJson.url,
-				file_id:               endJson.file_id,
-				expected_sha256:       endJson.sha256,
-				filename:              uploadFile.name,
-				file_size:             uploadFile.size,
-				cf_turnstile_response: scanToken,
+				url:             endJson.url,
+				file_id:         endJson.file_id,
+				expected_sha256: endJson.sha256,
+				filename:        uploadFile.name,
+				file_size:       uploadFile.size,
 			}),
 		});
 
@@ -302,7 +309,7 @@ async function uploadAndScan() {
 		//    uploadInProgress check never sees it as true on a successful scan.
 		window.uploadInProgress = false;
 		if (scanRes.ok && resultSha) {
-			navigate('/detail/' + resultSha);
+			navigate('/file/' + resultSha);
 		} else {
 			// Fallback: show raw JSON inline if navigation target is unavailable
 			const raw = $('upload-result-raw');

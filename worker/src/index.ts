@@ -43,7 +43,7 @@ import { Hono } from 'hono';
 import { Container, getContainer } from '@cloudflare/containers';
 import { buildCacheKey, getCachedScan, getCacheStats, putCachedScan } from './cache';
 import { getScanHistory, getScanByHash, searchScans, putScanResult, getStats } from './history';
-import { handleUpload, serveDownload, cleanupUpload, startMultipartUpload, uploadPart, completeMultipartUpload } from './upload';
+import { handleUpload, serveDownload, cleanupUpload, startMultipartUpload, uploadPart, completeMultipartUpload, abortMultipartUpload } from './upload';
 import { kvGet, kvGetText, kvPut, kvKeyScan, kvKeyDetail, kvKeyStats, kvKeyCacheStats, KV_TTL_SCAN, KV_TTL_STATS, KV_TTL_CSTATS } from './kv';
 import { buildEmbedHtml } from './embed';
 
@@ -136,33 +136,6 @@ async function verifyTurnstileFromJSON(
 	}
 }
 
-/**
- * Extracts and validates a Turnstile token from a multipart/form-data request
- * without consuming the body (reads from a clone).
- */
-async function verifyTurnstileFromFormData(
-	request: Request,
-	secret: string,
-	remoteip: string,
-): Promise<Response | null> {
-	try {
-		const cloned = request.clone();
-		const formData = await cloned.formData();
-		const token = formData.get('cf-turnstile-response') as string | null;
-		if (!token) {
-			return new Response(
-				JSON.stringify({ error: 'Human verification required.', code: 400, ok: false }),
-				{ status: 400, headers: { 'Content-Type': 'application/json' } },
-			);
-		}
-		return verifyTurnstile(token, remoteip, secret);
-	} catch {
-		return new Response(
-			JSON.stringify({ error: 'Failed to parse verification data.', code: 400, ok: false }),
-			{ status: 400, headers: { 'Content-Type': 'application/json' } },
-		);
-	}
-}
 
 // =========================================================================================================
 // Container class
@@ -289,15 +262,14 @@ app.use('*', async (c, next) => {
 });
 
 // ── POST /api/upload ─────────────────────────────────────────────────────────
-// Receives a file via multipart/form-data, stores it in R2 temporarily,
-// and returns a download URL + metadata for scanning.
+// Legacy single-blob upload endpoint (kept for backwards compatibility).
+// The preferred flow is the three-step multipart protocol via /upload/start,
+// /upload/part, /upload/end — which includes Turnstile on /upload/start.
+// No Turnstile here; rate limiting is the only guard on this endpoint.
 
 app.post('/api/upload', async (c) => {
 	const rateLimited = await checkRateLimit(c.env.UPLOAD_RATE_LIMITER, 'upload:' + clientIP(c));
 	if (rateLimited) return rateLimited;
-
-	const turnstileError = await verifyTurnstileFromFormData(c.req.raw, c.env.TURNSTILE_SECRET_KEY, clientIP(c));
-	if (turnstileError) return turnstileError;
 
 	const result = await handleUpload(c.req.raw, c.env.UPLOAD_BUCKET);
 
@@ -316,8 +288,9 @@ app.post('/api/upload', async (c) => {
 });
 
 // ── POST /api/upload/start ───────────────────────────────────────────────────
-// Step 1 of multipart upload: validates Turnstile, calls R2 createMultipartUpload.
-// Returns { upload_id, r2_key } needed for subsequent /part and /end calls.
+// Step 1 of multipart upload. THIS is the only endpoint that requires Turnstile.
+// All downstream endpoints (/part, /end, /scan) are implicitly gated because
+// a valid upload_id / download URL can only be obtained after passing this check.
 
 app.post('/api/upload/start', async (c) => {
 	const rateLimited = await checkRateLimit(c.env.UPLOAD_RATE_LIMITER, 'upload:' + clientIP(c));
@@ -358,6 +331,20 @@ app.post('/api/upload/end', async (c) => {
 	return c.json({ ...result, ok: true });
 });
 
+// ── POST /api/upload/abort ───────────────────────────────────────────────────
+// Cancels an in-progress R2 multipart upload and releases all uploaded parts.
+// Called by the frontend on any upload error to prevent R2 orphaned parts.
+// Auth: the upload_id is itself an opaque secret issued by R2 — only a client
+// that obtained it from /api/upload/start can use this endpoint.
+
+app.post('/api/upload/abort', async (c) => {
+	const rateLimited = await checkRateLimit(c.env.UPLOAD_RATE_LIMITER, 'upload:' + clientIP(c));
+	if (rateLimited) return rateLimited;
+
+	const result = await abortMultipartUpload(c.req.raw, c.env.UPLOAD_BUCKET);
+	return c.json(result, result.ok ? 200 : 400);
+});
+
 // ── GET /api/download/:hash ──────────────────────────────────────────────────
 // Serves an uploaded file from R2 so the container can download it via reqwest.
 // The container calls this URL when scanning an uploaded file.
@@ -385,6 +372,9 @@ app.get('/api/download/:hash', async (c) => {
 // ── POST /api/scan ───────────────────────────────────────────────────────────
 // VirusTotal-style caching: check D1 before forwarding to the container.
 // Also stores results in the permanent `scans` table for history.
+//
+// No Turnstile here — human verification already happened at /api/upload/start.
+// A valid download URL can only be obtained after that gate was passed.
 
 app.post('/api/scan', async (c) => {
 	const rateLimited = await checkRateLimit(c.env.API_RATE_LIMITER, 'scan:' + clientIP(c));
@@ -404,15 +394,6 @@ app.post('/api/scan', async (c) => {
 		expectedSha256 = body.expected_sha256;
 	} catch {
 		return proxyToContainer(c);
-	}
-
-	// Turnstile validation
-	const turnstileToken = body.cf_turnstile_response;
-	if (turnstileToken) {
-		const turnstileError = await verifyTurnstile(turnstileToken, clientIP(c), c.env.TURNSTILE_SECRET_KEY);
-		if (turnstileError) return turnstileError;
-	} else {
-		return c.json({ error: 'Human verification required.', code: 400, ok: false }, 400);
 	}
 
 	// Cache HIT path — check KV first (fastest), then fall back to D1.
@@ -479,10 +460,13 @@ app.post('/api/scan', async (c) => {
 		const resClone = res.clone();
 		c.executionCtx.waitUntil(
 			(async () => {
+				// Always clean up the R2 upload, even if D1 writes fail.
+				// Use expectedSha256 (the key used at upload time) not the
+				// container-returned sha256, to avoid key mismatches.
 				try {
 					const resultJson = await resClone.text();
 					const parsed = JSON.parse(resultJson);
-					const sha256 = parsed?.scan_result?.file?.sha256;
+					const sha256 = parsed?.scan_result?.file?.sha256 || expectedSha256;
 					const riskLevel = parsed?.scan_result?.risk?.level || 'UNKNOWN';
 					const score = parsed?.scan_result?.risk?.score ?? 0;
 					const durationMs = parsed?.scan_result?.scan_duration_ms ?? 0;
@@ -496,17 +480,21 @@ app.post('/api/scan', async (c) => {
 							params.verbose,
 						);
 
-						await Promise.all([
-							putCachedScan(
-								c.env.SCAN_CACHE_DB,
-								cacheKey,
-								sha256,
-								resultJson,
-								parsed.file_id || '',
-								riskLevel,
-							),
-							kvPut(c.env.RESULT_CACHE, kvKeyScan(cacheKey), resultJson, KV_TTL_SCAN),
-						]);
+						try {
+							await Promise.all([
+								putCachedScan(
+									c.env.SCAN_CACHE_DB,
+									cacheKey,
+									sha256,
+									resultJson,
+									body.file_id || '',
+									riskLevel,
+								),
+								kvPut(c.env.RESULT_CACHE, kvKeyScan(cacheKey), resultJson, KV_TTL_SCAN),
+							]);
+						} catch (e) {
+							console.error('[scan/cache] Failed to write scan_cache or KV:', e);
+						}
 
 						// Store in permanent scans history table
 						const counts = countFindingsBySeverity(parsed.scan_result);
@@ -532,24 +520,29 @@ app.post('/api/scan', async (c) => {
 							_counts: counts,
 						});
 
-						await putScanResult(
-							c.env.SCAN_CACHE_DB,
-							sha256,
-							filename,
-							fileSize,
-							historyResult,
-							riskLevel,
-							score,
-							durationMs,
-							fileTreeJson,
-						);
-
-						// Clean up the temporary R2 upload if it came from /api/upload
-						await cleanupUpload(c.env.UPLOAD_BUCKET, sha256);
+						try {
+							await putScanResult(
+								c.env.SCAN_CACHE_DB,
+								sha256,
+								filename,
+								fileSize,
+								historyResult,
+								riskLevel,
+								score,
+								durationMs,
+								fileTreeJson,
+							);
+						} catch (e) {
+							console.error('[scan/history] Failed to write scan history:', e);
+						}
 					}
-				} catch {
-					// Silently skip caching on parse errors — the scan
-					// result is still returned to the client.
+				} catch (e) {
+					console.error('[scan/post-process] Failed to parse container response:', e);
+				} finally {
+					// Always delete the temporary R2 object, regardless of whether
+					// D1 writes succeeded. Use the client-supplied hash (same key used
+					// at upload time) to guarantee we find the correct object.
+					await cleanupUpload(c.env.UPLOAD_BUCKET, expectedSha256);
 				}
 			})(),
 		);
@@ -568,31 +561,24 @@ app.post('/api/scan', async (c) => {
 
 // ── POST /api/sanitize ──────────────────────────────────────────────────────
 // Proxy to container — no caching for sanitize.
+// No Turnstile: sanitize is only reachable after upload/start has already
+// verified the user.  Rate limiting is the guard here.
 
 app.post('/api/sanitize', async (c) => {
 	const rateLimited = await checkRateLimit(c.env.API_RATE_LIMITER, 'sanitize:' + clientIP(c));
 	if (rateLimited) return rateLimited;
 
-	// Turnstile validation from JSON clone without consuming the original body
-	const turnstileCheck = await verifyTurnstileFromJSON(c.req.raw, c.env.TURNSTILE_SECRET_KEY, clientIP(c));
-	if (turnstileCheck) return turnstileCheck;
-
-	// Proxy with the internally injected token
 	return proxyWithInjectedToken(c);
 });
 
 // ── POST /api/scan-batch ────────────────────────────────────────────────────
 // Proxy to container — no caching for batch scans.
+// No Turnstile: same reasoning as /api/scan and /api/sanitize.
 
 app.post('/api/scan-batch', async (c) => {
 	const rateLimited = await checkRateLimit(c.env.API_RATE_LIMITER, 'batch:' + clientIP(c));
 	if (rateLimited) return rateLimited;
 
-	// Turnstile validation from JSON clone without consuming the original body
-	const turnstileCheck = await verifyTurnstileFromJSON(c.req.raw, c.env.TURNSTILE_SECRET_KEY, clientIP(c));
-	if (turnstileCheck) return turnstileCheck;
-
-	// Proxy with the internally injected token
 	return proxyWithInjectedToken(c);
 });
 

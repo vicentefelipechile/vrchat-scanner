@@ -392,3 +392,49 @@ export async function completeMultipartUpload(
 		return { url: '', sha256: '', filename: '', file_size: 0, file_id: '', error: 'Failed to complete upload' };
 	}
 }
+
+// =========================================================================================================
+// Abort multipart upload
+// =========================================================================================================
+
+export interface MultipartAbortResult {
+	ok: boolean;
+	error?: string;
+}
+
+/**
+ * Aborts an in-progress R2 multipart upload, releasing all uploaded parts.
+ *
+ * Called by the frontend whenever an upload fails partway through so that
+ * orphaned parts are not left in R2 indefinitely.
+ *
+ * Expects JSON: { upload_id, r2_key }
+ */
+export async function abortMultipartUpload(
+	request: Request,
+	bucket: R2Bucket,
+): Promise<MultipartAbortResult> {
+	let body: any;
+	try { body = await request.json(); } catch {
+		return { ok: false, error: 'Invalid JSON body' };
+	}
+
+	const uploadId = String(body.upload_id || '');
+	const r2Key    = String(body.r2_key    || '');
+
+	if (!uploadId || !r2Key) {
+		return { ok: false, error: 'upload_id and r2_key are required' };
+	}
+
+	try {
+		const mp = bucket.resumeMultipartUpload(r2Key, uploadId);
+		await mp.abort();
+		return { ok: true };
+	} catch (e) {
+		// R2 returns an error if the upload_id is already completed or aborted.
+		// Treat this as success — the parts are gone either way.
+		console.warn('abortMultipartUpload: R2 error (may already be complete/aborted):', e);
+		return { ok: true };
+	}
+}
+
