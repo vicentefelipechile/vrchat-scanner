@@ -139,6 +139,15 @@ pub enum FindingId {
     TextureHighEntropy,
     #[serde(rename = "AUDIO_UNUSUAL_ENTROPY")]
     AudioUnusualEntropy,
+    /// Bytes found after all valid RIFF/AIFF chunks end — possible hidden payload.
+    #[serde(rename = "AUDIO_TRAILING_DATA")]
+    AudioTrailingData,
+    /// Unknown RIFF chunk type with a non-trivial payload — possible steganography.
+    #[serde(rename = "AUDIO_SUSPICIOUS_CHUNK")]
+    AudioSuspiciousChunk,
+    /// WAV/RIFF header structure is invalid or internally inconsistent.
+    #[serde(rename = "AUDIO_MALFORMED_HEADER")]
+    AudioMalformedHeader,
     #[serde(rename = "POLYGLOT_FILE")]
     PolyglotFile,
 
@@ -211,6 +220,9 @@ impl std::fmt::Display for FindingId {
             FindingId::MagicMismatchImage          => "MAGIC_MISMATCH_IMAGE",
             FindingId::TextureHighEntropy          => "TEXTURE_HIGH_ENTROPY",
             FindingId::AudioUnusualEntropy         => "AUDIO_UNUSUAL_ENTROPY",
+            FindingId::AudioTrailingData           => "AUDIO_TRAILING_DATA",
+            FindingId::AudioSuspiciousChunk        => "AUDIO_SUSPICIOUS_CHUNK",
+            FindingId::AudioMalformedHeader        => "AUDIO_MALFORMED_HEADER",
             FindingId::PolyglotFile                => "POLYGLOT_FILE",
             FindingId::MetaExternalRef             => "META_EXTERNAL_REF",
             FindingId::MetaFutureTimestamp         => "META_FUTURE_TIMESTAMP",

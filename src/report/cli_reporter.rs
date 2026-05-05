@@ -482,11 +482,29 @@ fn human_explanation(id: FindingId) -> &'static str {
         FindingId::PrefabInlineB64 =>
             "A YAML prefab or asset file contains a long Base64-encoded \
              field. This could be an inline texture or an embedded payload.",
-
         FindingId::PrefabManyScripts =>
             "A prefab references an unusually large number of scripts. \
              This increases the attack surface if any of those scripts \
              contain malicious code.",
+
+        FindingId::AudioTrailingData =>
+            "Bytes were found after the last valid RIFF/AIFF chunk in the audio \
+             file. Most audio players silently ignore this region, making it a \
+             convenient hiding spot for payloads. A small amount of alignment \
+             padding (< 64 bytes) is normal; larger regions are suspicious.",
+
+        FindingId::AudioSuspiciousChunk =>
+            "An audio file contains a RIFF chunk with an unrecognised ID carrying \
+             a substantial amount of data. Standard WAV files use well-defined \
+             chunks (fmt, data, LIST, bext, etc.). An unknown chunk large enough \
+             to hold binary content is a potential steganographic carrier.",
+
+        FindingId::AudioMalformedHeader =>
+            "The WAV or AIFF file has a structurally invalid header — for example, \
+             a declared chunk size that exceeds the file size, a missing mandatory \
+             chunk, or implausible audio parameters. Legitimate exporters always \
+             produce well-formed headers; malformed ones may indicate the file was \
+             crafted manually to bypass parser checks.",
     }
 }
 

@@ -108,7 +108,7 @@ pub fn analyze(data: &[u8], location: &str) -> Vec<Finding> {
             findings.push(
                 Finding::new(
                     FindingId::TextureHighEntropy,
-                    Severity::Medium,
+                    Severity::Low,
                     PTS_TEXTURE_HIGH_ENTROPY,
                     location,
                     format!(

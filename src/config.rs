@@ -306,10 +306,26 @@ pub const PTS_MAGIC_MISMATCH_IMAGE: u32 = 2;
 
 /// `TextureHighEntropy` — Texture entropy above `ENTROPY_TEXTURE_HIGH`.
 /// Only fires for uncompressed formats (PNG/JPEG/WebP are exempt).
-pub const PTS_TEXTURE_HIGH_ENTROPY: u32 = 8;
+pub const PTS_TEXTURE_HIGH_ENTROPY: u32 = 2;
 
-/// `AudioUnusualEntropy` — Audio entropy outside the expected range.
-pub const PTS_AUDIO_UNUSUAL_ENTROPY: u32 = 8;
+/// `AudioUnusualEntropy` — Audio entropy outside the expected range
+/// (data-chunk entropy only, not whole-file).
+pub const PTS_AUDIO_UNUSUAL_ENTROPY: u32 = 2;
+
+/// `AudioTrailingData` — Bytes found after all valid RIFF chunks end.
+/// A common steganography technique: append an arbitrary payload after
+/// the last `data` chunk; most audio players ignore it silently.
+pub const PTS_AUDIO_TRAILING_DATA: u32 = 35;
+
+/// `AudioSuspiciousChunk` — Unknown RIFF chunk type carrying ≥ 256 bytes.
+/// Attackers can define custom RIFF chunks to hide payloads inside a valid WAV
+/// that passes magic-byte and basic integrity checks.
+pub const PTS_AUDIO_SUSPICIOUS_CHUNK: u32 = 25;
+
+/// `AudioMalformedHeader` — RIFF/WAV header is structurally invalid.
+/// A file crafted to pass as WAV but with incorrect chunk sizes or missing
+/// mandatory chunks is worth flagging even if no payload is visible.
+pub const PTS_AUDIO_MALFORMED_HEADER: u32 = 20;
 
 /// `PolyglotFile` — A valid PE or ZIP header found inside a texture or audio file.
 /// Score may be reduced to `REDUCE_POLYGLOT_NO_LOADER` when no loader script exists.
@@ -415,14 +431,25 @@ pub const ENTROPY_PE_SUSPICIOUS: f64 = 6.8;
 pub const ENTROPY_TEXTURE_HIGH: f64 = 7.5;
 
 /// Audio entropy below this value triggers `AudioUnusualEntropy` for
-/// uncompressed formats (WAV, AIFF).  A legitimate audio file at ~0.0 entropy
-/// means it is essentially silence or a non-audio file.
-pub const ENTROPY_AUDIO_MIN: f64 = 5.0;
+/// uncompressed formats (WAV, AIFF).  Measured on the RIFF `data` chunk only,
+/// not the whole file (headers are low-entropy ASCII and would skew the result).
+/// 3.0 is set conservatively: genuine silence is ~0, simple SFX land around
+/// 3–4, and normal voice/music starts at 5+.  Anything below 3.0 is almost
+/// certainly not real audio or is a near-empty file used as a carrier.
+pub const ENTROPY_AUDIO_MIN: f64 = 3.0;
 
 /// Audio entropy above this value triggers `AudioUnusualEntropy` for
 /// uncompressed formats.  Compressed audio (MP3, OGG, FLAC) is exempt because
 /// their compression codec raises entropy naturally above 7.5.
 pub const ENTROPY_AUDIO_MAX: f64 = 7.9;
+
+/// Minimum number of trailing bytes (after the last RIFF chunk) to trigger
+/// `AudioTrailingData`.  Small alignment pads (1-3 bytes) are normal in RIFF.
+pub const AUDIO_TRAILING_MIN_BYTES: usize = 64;
+
+/// Minimum payload size (bytes) for an unknown RIFF chunk to be flagged as
+/// `AudioSuspiciousChunk`.  Chunks smaller than this are likely metadata padding.
+pub const AUDIO_SUSPICIOUS_CHUNK_MIN_BYTES: usize = 256;
 
 // =============================================================================
 // 5. PACKAGE-LEVEL THRESHOLDS
