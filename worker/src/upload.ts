@@ -296,6 +296,9 @@ export async function startMultipartUpload(
 	if (!filename || !sha256) {
 		return { upload_id: '', r2_key: '', error: 'filename and sha256 are required' };
 	}
+	if (!/^[0-9a-f]{64}$/.test(sha256)) {
+		return { upload_id: '', r2_key: '', error: 'sha256 must be a 64-character lowercase hex string' };
+	}
 	if (fileSize > MAX_UPLOAD_SIZE) {
 		return { upload_id: '', r2_key: '', error: `File too large. Maximum is ${MAX_UPLOAD_SIZE / 1024 / 1024} MB` };
 	}
@@ -372,6 +375,9 @@ export async function completeMultipartUpload(
 
 	if (!uploadId || !r2Key || !sha256 || parts.length === 0) {
 		return { url: '', sha256: '', filename: '', file_size: 0, file_id: '', error: 'upload_id, r2_key, sha256, and parts are required' };
+	}
+	if (!/^[0-9a-f]{64}$/.test(sha256)) {
+		return { url: '', sha256: '', filename: '', file_size: 0, file_id: '', error: 'sha256 must be a 64-character lowercase hex string' };
 	}
 
 	try {

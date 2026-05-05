@@ -185,18 +185,63 @@ export class ScannerContainer extends Container {
 // Helpers
 // =========================================================================================================
 
-/**
- * Strips the /api prefix from the request path and forwards it to the
- * container.  Used as a generic proxy for all non-cached endpoints.
- */
 async function proxyToContainer(c: HonoContext): Promise<Response> {
 	const container = getContainer(c.env.SCANNER, 'singleton');
 
 	const url = new URL(c.req.url);
-	url.pathname = url.pathname.replace('/api', '');
+	url.pathname = url.pathname.replace(/^\/api/, '');
 
 	const req = new Request(url, c.req.raw);
 	return container.fetch(req);
+}
+
+/**
+ * Parses the JSON request body, securely injects the DOWNLOAD_SECRET into any
+ * R2 download URLs, and forwards the mutated request to the container.
+ * This ensures the frontend never sees the secret token.
+ */
+async function proxyWithInjectedToken(c: HonoContext): Promise<Response> {
+	let body: any;
+	try {
+		body = await c.req.json();
+	} catch {
+		// If it's not valid JSON, just pass it through untouched
+		return proxyToContainer(c);
+	}
+
+	// Helper to inject the token into a single file object
+	const inject = (obj: any) => {
+		if (obj && typeof obj.url === 'string') {
+			try {
+				const u = new URL(obj.url);
+				u.searchParams.set('dl_token', c.env.DOWNLOAD_SECRET);
+				obj.url = u.toString();
+			} catch {}
+		}
+	};
+
+	// Inject into top-level object (for /scan, /sanitize)
+	inject(body);
+	
+	// Inject into files array (for /scan-batch)
+	if (Array.isArray(body.files)) {
+		body.files.forEach(inject);
+	}
+
+	const container = getContainer(c.env.SCANNER, 'singleton');
+	const url = new URL(c.req.url);
+	url.pathname = url.pathname.replace(/^\/api/, '');
+
+	const newReq = new Request(url, {
+		method: c.req.method,
+		headers: c.req.raw.headers,
+		body: JSON.stringify(body),
+	});
+	
+	// Remove content-length as the body size has changed
+	newReq.headers.delete('content-length');
+
+	return container.fetch(newReq);
 }
 
 /**
@@ -234,6 +279,14 @@ function countFindingsBySeverity(scanResult: any) {
 // =========================================================================================================
 
 const app = new Hono<{ Bindings: Env }>();
+
+// ── Security headers (applied to all Worker-generated responses) ─────────────
+app.use('*', async (c, next) => {
+	await next();
+	c.header('X-Content-Type-Options', 'nosniff');
+	c.header('X-Frame-Options', 'DENY');
+	c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+});
 
 // ── POST /api/upload ─────────────────────────────────────────────────────────
 // Receives a file via multipart/form-data, stores it in R2 temporarily,
@@ -283,6 +336,9 @@ app.post('/api/upload/start', async (c) => {
 // Headers: X-Upload-Id, X-R2-Key, X-Part-Number. Body: raw bytes.
 
 app.put('/api/upload/part', async (c) => {
+	const rateLimited = await checkRateLimit(c.env.UPLOAD_RATE_LIMITER, 'upload:' + clientIP(c));
+	if (rateLimited) return rateLimited;
+
 	const result = await uploadPart(c.req.raw, c.env.UPLOAD_BUCKET);
 	if (result.error) return c.json({ error: result.error, ok: false }, 400);
 	return c.json({ ...result, ok: true });
@@ -293,8 +349,12 @@ app.put('/api/upload/part', async (c) => {
 // Body: { upload_id, r2_key, sha256, filename, file_size, parts: [{etag, part_number}] }
 
 app.post('/api/upload/end', async (c) => {
+	const rateLimited = await checkRateLimit(c.env.UPLOAD_RATE_LIMITER, 'upload:' + clientIP(c));
+	if (rateLimited) return rateLimited;
+
 	const result = await completeMultipartUpload(c.req.raw, c.env.UPLOAD_BUCKET);
 	if (result.error) return c.json({ error: result.error, ok: false }, 400);
+
 	return c.json({ ...result, ok: true });
 });
 
@@ -303,7 +363,22 @@ app.post('/api/upload/end', async (c) => {
 // The container calls this URL when scanning an uploaded file.
 
 app.get('/api/download/:hash', async (c) => {
+	// Internal-only: requires the shared DOWNLOAD_SECRET token.
+	// Only the scanner container knows this token (it receives the URL from /api/upload/end).
+	const dlToken = c.req.query('dl_token') || '';
+	if (dlToken !== c.env.DOWNLOAD_SECRET) {
+		return new Response('Unauthorized', { status: 401 });
+	}
+
+	// Validate hash format before touching R2.
 	const hash = c.req.param('hash');
+	if (!/^[0-9a-f]{64}$/.test(hash)) {
+		return new Response('Invalid hash', { status: 400 });
+	}
+
+	const rateLimited = await checkRateLimit(c.env.UPLOAD_RATE_LIMITER, 'dl:' + clientIP(c));
+	if (rateLimited) return rateLimited;
+
 	return serveDownload(c.env.UPLOAD_BUCKET, hash);
 });
 
@@ -373,15 +448,30 @@ app.post('/api/scan', async (c) => {
 		}
 	}
 
-	// Cache MISS path — forward the original request to the Rust container.
-	// The body is still intact because we parsed from a clone above.
+	// Cache MISS path — forward the request to the Rust container.
+	// We inject the download token securely here before forwarding.
 	const container = getContainer(c.env.SCANNER, 'singleton');
 
 	const url = new URL(c.req.url);
 	url.pathname = '/scan';
 
-	const req = new Request(url, raw);
-	const res = await container.fetch(req);
+	// Inject token into the body we already parsed
+	if (body && typeof body.url === 'string') {
+		try {
+			const u = new URL(body.url);
+			u.searchParams.set('dl_token', c.env.DOWNLOAD_SECRET);
+			body.url = u.toString();
+		} catch {}
+	}
+
+	const newReq = new Request(url, {
+		method: c.req.method,
+		headers: c.req.raw.headers,
+		body: JSON.stringify(body),
+	});
+	newReq.headers.delete('content-length');
+
+	const res = await container.fetch(newReq);
 
 	// After a successful scan, store the result in D1 asynchronously
 	// via ctx.waitUntil so the response is not delayed.
@@ -487,7 +577,8 @@ app.post('/api/sanitize', async (c) => {
 	const turnstileCheck = await verifyTurnstileFromJSON(c.req.raw, c.env.TURNSTILE_SECRET_KEY, clientIP(c));
 	if (turnstileCheck) return turnstileCheck;
 
-	return proxyToContainer(c);
+	// Proxy with the internally injected token
+	return proxyWithInjectedToken(c);
 });
 
 // ── POST /api/scan-batch ────────────────────────────────────────────────────
@@ -501,13 +592,16 @@ app.post('/api/scan-batch', async (c) => {
 	const turnstileCheck = await verifyTurnstileFromJSON(c.req.raw, c.env.TURNSTILE_SECRET_KEY, clientIP(c));
 	if (turnstileCheck) return turnstileCheck;
 
-	return proxyToContainer(c);
+	// Proxy with the internally injected token
+	return proxyWithInjectedToken(c);
 });
 
 // ── GET /api/health ─────────────────────────────────────────────────────────
-// Proxy to container.
-
-app.get('/api/health', proxyToContainer);
+app.get('/api/health', async (c) => {
+	const rateLimited = await checkRateLimit(c.env.API_RATE_LIMITER, 'api:' + clientIP(c));
+	if (rateLimited) return rateLimited;
+	return proxyToContainer(c);
+});
 
 // ── GET /api/cache-stats ────────────────────────────────────────────────────
 // Queries D1 directly — no container needed.
@@ -525,6 +619,9 @@ app.get('/api/cache-stats', async (c) => {
 // Paginated list of past scans.  Query params: page, limit, risk.
 
 app.get('/api/history', async (c) => {
+	const rateLimited = await checkRateLimit(c.env.API_RATE_LIMITER, 'api:' + clientIP(c));
+	if (rateLimited) return rateLimited;
+
 	const page = parseInt(c.req.query('page') || '1', 10);
 	const limit = parseInt(c.req.query('limit') || '25', 10);
 	const risk = c.req.query('risk');
@@ -537,13 +634,33 @@ app.get('/api/history', async (c) => {
 // Full scan detail by SHA-256 hash.
 
 app.get('/api/history/:sha256', async (c) => {
+	const rateLimited = await checkRateLimit(c.env.API_RATE_LIMITER, 'api:' + clientIP(c));
+	if (rateLimited) return rateLimited;
+
 	const sha256 = c.req.param('sha256').toLowerCase();
+
+	// Reject invalid hashes early — avoids wasted D1 UPDATE on garbage input.
+	if (!/^[0-9a-f]{64}$/.test(sha256)) {
+		return c.json({ error: 'Invalid hash format', ok: false }, 400);
+	}
+
+	// Always bump the access counter in D1, regardless of whether KV serves
+	// the response. Fire-and-forget so it never delays the response.
+	c.executionCtx.waitUntil(
+		c.env.SCAN_CACHE_DB
+			.prepare('UPDATE scans SET access_count = access_count + 1, last_accessed = ? WHERE sha256 = ?')
+			.bind(Date.now(), sha256)
+			.run()
+			.catch(() => { }),
+	);
 
 	// KV — fastest path for repeat detail views
 	const kvDetail = await kvGet<Record<string, unknown>>(c.env.RESULT_CACHE, kvKeyDetail(sha256));
 	if (kvDetail) {
 		c.header('X-Cache', 'KV-HIT');
-		return c.json({ ...kvDetail, ok: true });
+		// Increment the cached count so the response reflects the current visit.
+		const cachedCount = typeof kvDetail.access_count === 'number' ? kvDetail.access_count : 0;
+		return c.json({ ...kvDetail, access_count: cachedCount + 1, ok: true });
 	}
 
 	// D1 — source of truth
@@ -561,9 +678,14 @@ app.get('/api/history/:sha256', async (c) => {
 // Search by hash prefix or filename substring.  Query param: q.
 
 app.get('/api/search', async (c) => {
+	const rateLimited = await checkRateLimit(c.env.API_RATE_LIMITER, 'api:' + clientIP(c));
+	if (rateLimited) return rateLimited;
+
 	const query = c.req.query('q') || '';
 
-	if (!query.trim()) {
+	// Require at least 4 characters to prevent full-database enumeration
+	// (an attacker iterating 1-char hex prefixes needs only 16 requests per level).
+	if (query.trim().length < 4) {
 		return c.json({ results: [], ok: true });
 	}
 
@@ -575,6 +697,9 @@ app.get('/api/search', async (c) => {
 // Global platform statistics.
 
 app.get('/api/stats', async (c) => {
+	const rateLimited = await checkRateLimit(c.env.API_RATE_LIMITER, 'api:' + clientIP(c));
+	if (rateLimited) return rateLimited;
+
 	const kvHit = await kvGet<Record<string, unknown>>(c.env.RESULT_CACHE, kvKeyStats());
 	if (kvHit) return c.json({ ...kvHit, ok: true });
 

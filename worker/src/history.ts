@@ -157,13 +157,6 @@ export async function getScanByHash(
 
 	if (!row) return null;
 
-	// Bump access count & last_accessed — fire-and-forget
-	db.prepare(
-		'UPDATE scans SET access_count = access_count + 1, last_accessed = ? WHERE sha256 = ?',
-	)
-		.bind(Date.now(), sha256)
-		.run();
-
 	return {
 		sha256: row.sha256,
 		filename: row.filename,
@@ -179,7 +172,7 @@ export async function getScanByHash(
 		high_count: row.high_count,
 		medium_count: row.medium_count,
 		low_count: row.low_count,
-		access_count: row.access_count + 1,
+		access_count: row.access_count,
 		last_accessed: row.last_accessed,
 	};
 }
