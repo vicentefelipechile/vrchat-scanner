@@ -140,11 +140,29 @@ $('upload-scan-btn').addEventListener('click', function () {
 // ── Main upload + scan flow ───────────────────────────────────────────────────
 
 async function uploadAndScan() {
+	window.uploadInProgress = true; // block navigation while uploading
 	hideStatusBar();
 	hideResult();
-	showProgress('Verifying you are human...');
+	showProgress('Checking scan cache...');
+
+	// ── Step 0: Cache pre-check ───────────────────────────────────────────────
+	// If this SHA-256 was already scanned, skip the upload entirely and
+	// navigate directly to the existing result.
+	try {
+		var cacheRes = await fetch('/api/history/' + uploadHash);
+		if (cacheRes.ok) {
+			var cacheJson = await cacheRes.json().catch(function () { return {}; });
+			if (cacheJson.ok) {
+				window.uploadInProgress = false;
+				hideProgress();
+				navigate('/detail/' + uploadHash);
+				return;
+			}
+		}
+	} catch (_) { /* network error on pre-check — continue with full upload */ }
 
 	// ── Step 1: Turnstile ────────────────────────────────────────────────────
+	setProgress(3, 'Verifying you are human...');
 	var token;
 	try { token = await getTurnstileToken(); }
 	catch (e) { abortUpload('Verification failed: ' + e.message); return; }
@@ -296,6 +314,7 @@ async function uploadAndScan() {
 		abortUpload('Scan error: ' + e.message);
 		return;
 	} finally {
+		window.uploadInProgress = false; // always lift the navigation guard
 		hideProgress();
 	}
 }

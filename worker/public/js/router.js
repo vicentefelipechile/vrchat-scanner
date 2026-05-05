@@ -26,6 +26,11 @@ function showPanel(name) {
 }
 
 function navigate(path) {
+	// Guard: block SPA navigation while an upload is in progress
+	if (window.uploadInProgress) {
+		if (!confirm('An upload is in progress. Leaving now will cancel it. Continue?')) return;
+		window.uploadInProgress = false;
+	}
 	history.pushState(null, '', path);
 	routePath(path);
 }
@@ -44,9 +49,23 @@ function routePath(path) {
 	if (panel === 'history') loadHistory();
 }
 
-// Handle browser back/forward
+// Handle browser back/forward — guard upload in progress
 window.addEventListener('popstate', function () {
+	if (window.uploadInProgress) {
+		// Re-push current URL to cancel the back/forward action, then ask
+		history.pushState(null, '', window.location.pathname);
+		if (!confirm('An upload is in progress. Leaving now will cancel it. Continue?')) return;
+		window.uploadInProgress = false;
+	}
 	routePath(window.location.pathname);
+});
+
+// Block tab close / page reload while uploading
+window.addEventListener('beforeunload', function (e) {
+	if (window.uploadInProgress) {
+		e.preventDefault();
+		e.returnValue = ''; // required for Chrome
+	}
 });
 
 // Handle initial page load — deferred to DOMContentLoaded so that all
