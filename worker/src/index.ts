@@ -43,7 +43,8 @@ import { Hono } from 'hono';
 import { Container, getContainer } from '@cloudflare/containers';
 import { buildCacheKey, getCachedScan, getCacheStats, putCachedScan } from './cache';
 import { getScanHistory, getScanByHash, searchScans, putScanResult, getStats } from './history';
-import { handleUpload, serveDownload, cleanupUpload } from './upload';
+import { handleUpload, serveDownload, cleanupUpload, startMultipartUpload, uploadPart, completeMultipartUpload } from './upload';
+import { kvGet, kvGetText, kvPut, kvKeyScan, kvKeyDetail, kvKeyStats, kvKeyCacheStats, KV_TTL_SCAN, KV_TTL_STATS, KV_TTL_CSTATS } from './kv';
 
 // =========================================================================================================
 // Rate limiting
@@ -260,6 +261,42 @@ app.post('/api/upload', async (c) => {
 	});
 });
 
+// ── POST /api/upload/start ───────────────────────────────────────────────────
+// Step 1 of multipart upload: validates Turnstile, calls R2 createMultipartUpload.
+// Returns { upload_id, r2_key } needed for subsequent /part and /end calls.
+
+app.post('/api/upload/start', async (c) => {
+	const rateLimited = await checkRateLimit(c.env.UPLOAD_RATE_LIMITER, 'upload:' + clientIP(c));
+	if (rateLimited) return rateLimited;
+
+	const turnstileError = await verifyTurnstileFromJSON(c.req.raw, c.env.TURNSTILE_SECRET_KEY, clientIP(c));
+	if (turnstileError) return turnstileError;
+
+	const result = await startMultipartUpload(c.req.raw, c.env.UPLOAD_BUCKET);
+	if (result.error) return c.json({ error: result.error, ok: false }, 400);
+	return c.json({ ...result, ok: true });
+});
+
+// ── PUT /api/upload/part ─────────────────────────────────────────────────────
+// Step 2: uploads one binary chunk. Auth is implicit via upload_id from R2.
+// Headers: X-Upload-Id, X-R2-Key, X-Part-Number. Body: raw bytes.
+
+app.put('/api/upload/part', async (c) => {
+	const result = await uploadPart(c.req.raw, c.env.UPLOAD_BUCKET);
+	if (result.error) return c.json({ error: result.error, ok: false }, 400);
+	return c.json({ ...result, ok: true });
+});
+
+// ── POST /api/upload/end ─────────────────────────────────────────────────────
+// Step 3: finalises the R2 multipart upload. Returns the download URL for scanning.
+// Body: { upload_id, r2_key, sha256, filename, file_size, parts: [{etag, part_number}] }
+
+app.post('/api/upload/end', async (c) => {
+	const result = await completeMultipartUpload(c.req.raw, c.env.UPLOAD_BUCKET);
+	if (result.error) return c.json({ error: result.error, ok: false }, 400);
+	return c.json({ ...result, ok: true });
+});
+
 // ── GET /api/download/:hash ──────────────────────────────────────────────────
 // Serves an uploaded file from R2 so the container can download it via reqwest.
 // The container calls this URL when scanning an uploaded file.
@@ -302,8 +339,7 @@ app.post('/api/scan', async (c) => {
 		return c.json({ error: 'Human verification required.', code: 400, ok: false }, 400);
 	}
 
-	// Cache HIT path — return the stored result immediately without
-	// spinning up the container.
+	// Cache HIT path — check KV first (fastest), then fall back to D1.
 	if (expectedSha256) {
 		const cacheKey = buildCacheKey(
 			expectedSha256,
@@ -312,9 +348,21 @@ app.post('/api/scan', async (c) => {
 			params.verbose,
 		);
 
-		const cached = await getCachedScan(c.env.SCAN_CACHE_DB, cacheKey);
+		// ── KV check (sub-millisecond, no SQL overhead) ──────────────────────
+		const kvResult = await kvGetText(c.env.RESULT_CACHE, kvKeyScan(cacheKey));
+		if (kvResult) {
+			c.header('X-Cache', 'KV-HIT');
+			return c.body(kvResult, {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
 
+		// ── D1 check (fallback when KV cold or expired) ──────────────────────
+		const cached = await getCachedScan(c.env.SCAN_CACHE_DB, cacheKey);
 		if (cached) {
+			// Warm KV so the next request skips D1
+			c.executionCtx.waitUntil(kvPut(c.env.RESULT_CACHE, kvKeyScan(cacheKey), cached.result, KV_TTL_SCAN));
 			c.header('X-Cache', 'HIT');
 			c.header('X-Cache-Access-Count', String(cached.access_count));
 			return c.body(cached.result, {
@@ -349,7 +397,7 @@ app.post('/api/scan', async (c) => {
 					const durationMs = parsed?.scan_result?.scan_duration_ms ?? 0;
 
 					if (sha256) {
-						// Store in scan_cache (D1, 30-day TTL)
+						// Store in scan_cache (D1, 30-day TTL) and KV (24-h fast cache)
 						const cacheKey = buildCacheKey(
 							sha256,
 							params.format,
@@ -357,14 +405,17 @@ app.post('/api/scan', async (c) => {
 							params.verbose,
 						);
 
-						await putCachedScan(
-							c.env.SCAN_CACHE_DB,
-							cacheKey,
-							sha256,
-							resultJson,
-							parsed.file_id || '',
-							riskLevel,
-						);
+						await Promise.all([
+							putCachedScan(
+								c.env.SCAN_CACHE_DB,
+								cacheKey,
+								sha256,
+								resultJson,
+								parsed.file_id || '',
+								riskLevel,
+							),
+							kvPut(c.env.RESULT_CACHE, kvKeyScan(cacheKey), resultJson, KV_TTL_SCAN),
+						]);
 
 						// Store in permanent scans history table
 						const counts = countFindingsBySeverity(parsed.scan_result);
@@ -372,9 +423,16 @@ app.post('/api/scan', async (c) => {
 							? JSON.stringify(parsed.scan_result.file_tree)
 							: undefined;
 
-						// Extract filename and size from the scan report
-						const filename = parsed.scan_result?.file?.path || sha256;
-						const fileSize = parsed.scan_result?.file?.size ?? 0;
+						// Extract filename and size: prefer the client-supplied values
+						// (original filename / browser File.size) over the Rust scanner's
+						// internal file.path (which is the temp download URL) and file.size
+						// (which may be 0 if the scanner doesn't populate it).
+						const filename = body.filename
+							|| parsed.scan_result?.file?.path
+							|| sha256;
+						const fileSize = body.file_size
+							|| parsed.scan_result?.file?.size
+							|| 0;
 
 						// Build a result JSON that includes the full scan result
 						// with finding counts at the top level for easy display
@@ -454,7 +512,11 @@ app.get('/api/health', proxyToContainer);
 // Queries D1 directly — no container needed.
 
 app.get('/api/cache-stats', async (c) => {
+	const kvHit = await kvGet<Record<string, unknown>>(c.env.RESULT_CACHE, kvKeyCacheStats());
+	if (kvHit) return c.json(kvHit);
+
 	const stats = await getCacheStats(c.env.SCAN_CACHE_DB);
+	c.executionCtx.waitUntil(kvPut(c.env.RESULT_CACHE, kvKeyCacheStats(), stats, KV_TTL_CSTATS));
 	return c.json(stats);
 });
 
@@ -475,12 +537,22 @@ app.get('/api/history', async (c) => {
 
 app.get('/api/history/:sha256', async (c) => {
 	const sha256 = c.req.param('sha256').toLowerCase();
-	const detail = await getScanByHash(c.env.SCAN_CACHE_DB, sha256);
 
+	// KV — fastest path for repeat detail views
+	const kvDetail = await kvGet<Record<string, unknown>>(c.env.RESULT_CACHE, kvKeyDetail(sha256));
+	if (kvDetail) {
+		c.header('X-Cache', 'KV-HIT');
+		return c.json({ ...kvDetail, ok: true });
+	}
+
+	// D1 — source of truth
+	const detail = await getScanByHash(c.env.SCAN_CACHE_DB, sha256);
 	if (!detail) {
 		return c.json({ error: 'Scan not found', ok: false }, 404);
 	}
 
+	// Warm KV for subsequent requests
+	c.executionCtx.waitUntil(kvPut(c.env.RESULT_CACHE, kvKeyDetail(sha256), detail, KV_TTL_SCAN));
 	return c.json({ ...detail, ok: true });
 });
 
@@ -502,7 +574,11 @@ app.get('/api/search', async (c) => {
 // Global platform statistics.
 
 app.get('/api/stats', async (c) => {
+	const kvHit = await kvGet<Record<string, unknown>>(c.env.RESULT_CACHE, kvKeyStats());
+	if (kvHit) return c.json({ ...kvHit, ok: true });
+
 	const stats = await getStats(c.env.SCAN_CACHE_DB);
+	c.executionCtx.waitUntil(kvPut(c.env.RESULT_CACHE, kvKeyStats(), stats, KV_TTL_STATS));
 	return c.json({ ...stats, ok: true });
 });
 

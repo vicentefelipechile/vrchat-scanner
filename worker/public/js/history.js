@@ -13,8 +13,15 @@ async function loadHistory() {
 	try {
 		var p = new URLSearchParams(); p.set('page', historyPage); p.set('limit', 25);
 		if (historyRisk !== 'all') p.set('risk', historyRisk);
-		var res = await fetch('/api/history?' + p), json = await res.json();
-		if (!json.ok) { setStatus($('history-status'), false, 'ERROR'); $('history-tbody').innerHTML = '<tr><td colspan="7" class="table-empty">Failed to load.</td></tr>'; return; }
+		var res = await fetch('/api/history?' + p);
+		var json = {};
+		try { json = await res.json(); } catch(e) {}
+		
+		if (!res.ok || !json.ok) { 
+			setStatus($('history-status'), false, 'ERROR'); 
+			$('history-tbody').innerHTML = '<tr><td colspan="7" class="table-empty">Failed to load: ' + (json.error || res.statusText) + '</td></tr>'; 
+			return; 
+		}
 		setStatus($('history-status'), true, json.total + ' scans');
 		if (json.entries.length === 0) {
 			$('history-tbody').innerHTML = '<tr><td colspan="7" class="table-empty">No scans yet. Upload a file to get started.</td></tr>';

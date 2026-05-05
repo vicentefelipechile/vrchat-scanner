@@ -6,11 +6,6 @@ var PANEL_PATHS = {
 	'upload': '/upload',
 	'history': '/history',
 	'platform-stats': '/stats',
-	'scan': '/scan-url',
-	'sanitize': '/sanitize',
-	'batch': '/batch',
-	'cache-stats': '/cache-stats',
-	'health': '/health',
 };
 
 var PATH_TO_PANEL = {};
@@ -54,8 +49,10 @@ window.addEventListener('popstate', function () {
 	routePath(window.location.pathname);
 });
 
-// Handle initial page load
-(function initRoute() {
+// Handle initial page load — deferred to DOMContentLoaded so that all
+// other scripts (detail.js, history.js, etc.) are already executed and
+// their globals (currentDetailHash, showDetail, loadHistory…) are defined.
+window.addEventListener('DOMContentLoaded', function () {
 	var path = window.location.pathname;
 	if (path !== '/') {
 		if (PATH_TO_PANEL[path] || /^\/(?:detail|file)\//.test(path)) {
@@ -64,7 +61,7 @@ window.addEventListener('popstate', function () {
 			history.replaceState(null, '', '/upload');
 		}
 	}
-})();
+});
 
 // Sidebar links use History API
 document.querySelectorAll('.sidebar a').forEach(function (link) {

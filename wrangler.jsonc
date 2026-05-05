@@ -5,10 +5,10 @@
   "assets": {
     "directory": "./worker/public",
     "html_handling": "auto-trailing-slash",
-    "not_found_handling": "single-page-application",
+    "not_found_handling": "single-page-application"
   },
   "vars": {
-    "TURNSTILE_SITEKEY": "0x4AAAAAADGqpmoCAv2qEqDD",
+    "TURNSTILE_SITEKEY": "0x4AAAAAADGqpmoCAv2qEqDD"
   },
   "containers": [
     {
@@ -17,36 +17,44 @@
       "class_name": "ScannerContainer",
       "image": "registry.cloudflare.com/3927234333597c7a6b80c66b997b6257/vrcstorage-scanner-scannercontainer:6adfb356",
       "max_instances": 5,
-      "instance_type": "standard-1",
-    },
+      "instance_type": "standard"
+    }
   ],
   "d1_databases": [
     {
       "binding": "SCAN_CACHE_DB",
       "database_name": "vrcstorage-scanner",
       "database_id": "00f09f5a-a88f-4490-a5f7-ace742d59210",
-      "migrations_dir": "./worker/migrations",
-    },
+      "migrations_dir": "./worker/migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "RESULT_CACHE",
+      "id": "9b9dad9c0d7f424dbd737864966168e7"
+    }
   ],
   "r2_buckets": [
     {
       "binding": "UPLOAD_BUCKET",
-      "bucket_name": "vrcstorage-uploads",
-    },
+      "bucket_name": "vrcstorage-uploads"
+    }
   ],
   "durable_objects": {
     "bindings": [
       {
         "class_name": "ScannerContainer",
-        "name": "SCANNER",
-      },
-    ],
+        "name": "SCANNER"
+      }
+    ]
   },
   "migrations": [
     {
-      "new_sqlite_classes": ["ScannerContainer"],
-      "tag": "v1",
-    },
+      "new_sqlite_classes": [
+        "ScannerContainer"
+      ],
+      "tag": "v1"
+    }
   ],
   "ratelimits": [
     {
@@ -54,19 +62,19 @@
       "namespace_id": "1001",
       "simple": {
         "limit": 5,
-        "period": 60,
-      },
+        "period": 60
+      }
     },
     {
       "name": "API_RATE_LIMITER",
       "namespace_id": "1002",
       "simple": {
         "limit": 30,
-        "period": 60,
-      },
-    },
+        "period": 60
+      }
+    }
   ],
   "observability": {
-    "enabled": true,
-  },
+    "enabled": true
+  }
 }

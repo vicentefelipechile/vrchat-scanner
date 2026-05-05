@@ -17,8 +17,11 @@ async function showDetail(sha256) {
 	$('detail-raw-content').textContent = '';
 
 	try {
-		var res = await fetch('/api/history/' + sha256), json = await res.json();
-		if (!json.ok) { $('detail-meta').innerHTML = '<p style="color:var(--danger)">Scan not found.</p>'; return; }
+		var res = await fetch('/api/history/' + sha256);
+		var json = {};
+		try { json = await res.json(); } catch(e) {}
+		
+		if (!res.ok || !json.ok) { $('detail-meta').innerHTML = '<p style="color:var(--danger)">Scan not found or failed to load.</p>'; return; }
 		renderDetail(json);
 	} catch (e) { $('detail-meta').innerHTML = '<p style="color:var(--danger)">Error: ' + e.message + '</p>'; }
 }
@@ -101,7 +104,7 @@ function renderFindings(filter) {
 		findingsHTML +=
 			'<div class="finding-card' + hidden + '" data-finding-sev="' + sev + '">' +
 			'<div class="finding-card-header">' +
-			'<span class="severity-badge ' + sevClass + '"><span class="sev-dot"></span>' + (f.severity || '') + '</span>' +
+			'<span class="severity-badge ' + sevClass + '">' + (f.severity || '') + '</span>' +
 			'<span class="finding-card-detail">' + (f.detail || f.id || 'Unknown') + '</span>' +
 			'<span class="finding-card-points">' + (f.points || 0) + ' pts</span>' +
 			'</div>' +

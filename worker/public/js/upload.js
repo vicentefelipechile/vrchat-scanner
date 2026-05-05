@@ -1,148 +1,338 @@
 // =============================================================================
-// upload.js — File upload panel logic
+// upload.js — Multipart file upload panel
+// =============================================================================
+// Flow:
+//   1. User selects/drops a file → SHA-256 computed in-browser
+//   2. "Scan Now" click → POST /api/upload/start (Turnstile here)
+//   3. File split into 10 MB chunks → PUT /api/upload/part × N (progress bar)
+//   4. POST /api/upload/end → returns { url, sha256, file_id }
+//   5. Second Turnstile → POST /api/scan → render structured result
 // =============================================================================
 
 var uploadFile = null;
 var uploadHash = null;
 
-var dropzone = $('upload-dropzone');
+/** R2 multipart minimum: 5 MB. We use 10 MB for comfortable headroom. */
+var CHUNK_SIZE = 10 * 1024 * 1024;
+
+var dropzone  = $('upload-dropzone');
 var fileInput = $('upload-file-input');
 
-dropzone.addEventListener('dragover', function (e) { e.preventDefault(); dropzone.classList.add('drag-over'); });
-dropzone.addEventListener('dragleave', function () { dropzone.classList.remove('drag-over'); });
+// ── Drag & drop ───────────────────────────────────────────────────────────────
+
+dropzone.addEventListener('dragover',  function (e) { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave', function ()  { dropzone.classList.remove('drag-over'); });
 dropzone.addEventListener('drop', function (e) {
 	e.preventDefault();
 	dropzone.classList.remove('drag-over');
 	if (e.dataTransfer.files.length > 0) processUploadFile(e.dataTransfer.files[0]);
 });
-dropzone.addEventListener('click', function () { fileInput.click(); });
-fileInput.addEventListener('change', function () { if (this.files.length > 0) processUploadFile(this.files[0]); });
+// Guard against the file input's click bubbling back up to the dropzone
+dropzone.addEventListener('click',    function (e) { if (e.target === fileInput) return; fileInput.click(); });
+fileInput.addEventListener('click',   function (e) { e.stopPropagation(); });
+fileInput.addEventListener('change',  function ()  { if (this.files.length > 0) processUploadFile(this.files[0]); });
+
+// ── SHA-256 (browser-side) ────────────────────────────────────────────────────
 
 async function computeSHA256(file) {
-	var buf = await file.arrayBuffer();
+	var buf     = await file.arrayBuffer();
 	var hashBuf = await crypto.subtle.digest('SHA-256', buf);
-	return Array.from(new Uint8Array(hashBuf)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+	return Array.from(new Uint8Array(hashBuf))
+		.map(function (b) { return b.toString(16).padStart(2, '0'); })
+		.join('');
 }
+
+// ── File selection ────────────────────────────────────────────────────────────
 
 async function processUploadFile(file) {
 	if (file.size > 500 * 1024 * 1024) { alert('File too large. Maximum size is 500 MB.'); return; }
 	uploadFile = file;
-	$('upload-filename').textContent = file.name;
-	$('upload-filesize').textContent = formatBytes(file.size);
-	$('upload-sha256').textContent = 'Computing SHA-256...';
-	dropzone.style.display = 'none';
-	$('upload-info').style.display = 'block';
-	$('upload-result').style.display = 'none';
+	$('upload-filename').textContent  = file.name;
+	$('upload-filesize').textContent  = formatBytes(file.size);
+	$('upload-sha256').textContent    = 'Computing SHA-256...';
+	dropzone.style.display            = 'none';
+	$('upload-info').style.display    = 'block';
+	hideResult();
+	hideStatusBar();
 	try {
 		uploadHash = await computeSHA256(file);
 		$('upload-sha256').textContent = uploadHash;
+		// Speculatively pre-fetch a Turnstile token while the user reads the info
+		if (window.turnstileWidgetId && !window.turnstileToken) {
+			getTurnstileToken().catch(function () {});
+		}
 	} catch (e) {
 		$('upload-sha256').textContent = 'Failed: ' + e.message;
 		uploadHash = null;
 	}
 }
 
+// ── UI helpers ────────────────────────────────────────────────────────────────
+
+function setProgress(pct, label) {
+	$('upload-progress-fill').style.width    = Math.min(100, pct) + '%';
+	$('upload-progress-text').textContent    = label || '';
+}
+
+function showProgress(label) {
+	$('upload-progress').style.display = 'block';
+	setProgress(0, label);
+}
+
+function hideProgress() {
+	setTimeout(function () { $('upload-progress').style.display = 'none'; }, 900);
+}
+
+function setUploadStatus(ok, text) {
+	var bar  = $('upload-status-bar');
+	var icon = $('upload-status-icon');
+	var txt  = $('upload-status-text');
+	if (!bar) return;
+	bar.style.display = 'flex';
+	if (ok === null) {
+		icon.textContent = '↻'; icon.className = 'status-icon pending';
+	} else if (ok) {
+		icon.textContent = '✓'; icon.className = 'status-icon ok';
+	} else {
+		icon.textContent = '✗'; icon.className = 'status-icon err';
+	}
+	txt.textContent = text || '';
+}
+
+function hideStatusBar() {
+	var bar = $('upload-status-bar');
+	if (bar) bar.style.display = 'none';
+}
+
+function hideResult() {
+	var s = $('upload-result-structured');
+	if (s) s.style.display = 'none';
+}
+
+function abortUpload(message) {
+	hideProgress();
+	setUploadStatus(false, message);
+}
+
+// ── Reset ─────────────────────────────────────────────────────────────────────
+
 function resetUpload() {
-	uploadFile = null; uploadHash = null;
-	dropzone.style.display = 'block';
+	uploadFile = null;
+	uploadHash = null;
+	dropzone.style.display         = 'block';
 	$('upload-info').style.display = 'none';
 	$('upload-progress').style.display = 'none';
-	$('upload-result').style.display = 'none';
-	$('upload-status').textContent = '';
-	$('upload-status').className = 'status';
+	hideStatusBar();
+	hideResult();
 	fileInput.value = '';
 	resetTurnstile();
 }
 
+// ── Buttons ───────────────────────────────────────────────────────────────────
+
 $('upload-reset-btn').addEventListener('click', resetUpload);
-$('upload-scan-btn').addEventListener('click', function () { if (uploadFile && uploadHash) uploadAndScan(false); else alert('Please select a file first.'); });
-$('upload-sanitize-btn').addEventListener('click', function () { if (uploadFile && uploadHash) uploadAndScan(true); else alert('Please select a file first.'); });
+$('upload-scan-btn').addEventListener('click', function () {
+	if (uploadFile && uploadHash) uploadAndScan();
+	else alert('Please select a file first.');
+});
+// "Scan & Sanitize" is disabled in HTML — no listener needed.
 
-async function uploadAndScan(sanitize) {
-	setStatus($('upload-status'), null, '');
-	$('upload-result').style.display = 'block';
-	setResult($('upload-result'), 'Verifying...');
-	$('upload-progress').style.display = 'block';
-	$('upload-progress-fill').style.width = '5%';
-	$('upload-progress-text').textContent = 'Verifying you are human...';
+// ── Main upload + scan flow ───────────────────────────────────────────────────
 
+async function uploadAndScan() {
+	hideStatusBar();
+	hideResult();
+	showProgress('Verifying you are human...');
+
+	// ── Step 1: Turnstile ────────────────────────────────────────────────────
 	var token;
 	try { token = await getTurnstileToken(); }
-	catch (e) {
-		$('upload-progress').style.display = 'none';
-		setStatus($('upload-status'), false, 'VERIFICATION FAILED');
-		setResult($('upload-result'), 'Human verification failed: ' + e.message);
-		return;
-	}
+	catch (e) { abortUpload('Verification failed: ' + e.message); return; }
 
-	$('upload-progress-text').textContent = 'Uploading...';
-
-	var fd = new FormData();
-	fd.append('file', uploadFile);
-	fd.append('sha256', uploadHash);
-	fd.append('cf-turnstile-response', token);
-
+	// ── Step 2: Start multipart upload ───────────────────────────────────────
+	setProgress(3, 'Initializing upload...');
+	var startJson;
 	try {
-		var upRes = await fetch('/api/upload', { method: 'POST', body: fd });
-		$('upload-progress-fill').style.width = '50%';
-		$('upload-progress-text').textContent = 'Scanning...';
-		var upJson = await upRes.json();
-
-		if (!upJson.ok) {
-			$('upload-progress').style.display = 'none';
-			setStatus($('upload-status'), false, 'UPLOAD ERROR');
-			setResult($('upload-result'), JSON.stringify(upJson, null, 2));
-			return;
-		}
-
-		$('upload-progress-fill').style.width = '75%';
-
-		var scanToken;
-		try { scanToken = await getTurnstileToken(); }
-		catch (e) {
-			$('upload-progress').style.display = 'none';
-			setStatus($('upload-status'), false, 'VERIFICATION FAILED');
-			setResult($('upload-result'), 'Human verification failed: ' + e.message);
-			return;
-		}
-
-		$('upload-progress-text').textContent = sanitize ? 'Sanitizing...' : 'Scanning...';
-
-		var endpoint = sanitize ? '/api/sanitize' : '/api/scan';
-		var params = new URLSearchParams();
-		if (sanitize) params.set('min_severity', 'high');
-		else params.set('format', 'json');
-
-		var scanRes = await fetch(endpoint + '?' + params, {
+		var startRes = await fetch('/api/upload/start', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ url: upJson.url, file_id: upJson.file_id, expected_sha256: upJson.sha256, cf_turnstile_response: scanToken }),
+			body: JSON.stringify({
+				filename:              uploadFile.name,
+				sha256:                uploadHash,
+				file_size:             uploadFile.size,
+				cf_turnstile_response: token,
+			}),
+		});
+		startJson = await startRes.json();
+		if (!startJson.ok) { abortUpload(startJson.error || 'Upload init failed'); return; }
+	} catch (e) { abortUpload('Network error: ' + e.message); return; }
+
+	var uploadId = startJson.upload_id;
+	var r2Key    = startJson.r2_key;
+
+	// ── Step 3: Upload parts ─────────────────────────────────────────────────
+	var totalChunks = Math.max(1, Math.ceil(uploadFile.size / CHUNK_SIZE));
+	var parts = [];
+
+	for (var i = 0; i < totalChunks; i++) {
+		var chunkStart = i * CHUNK_SIZE;
+		var chunkEnd   = Math.min(chunkStart + CHUNK_SIZE, uploadFile.size);
+		var chunk      = uploadFile.slice(chunkStart, chunkEnd);
+
+		// Progress: 5 % → 80 % spread across all parts
+		var pct = Math.round(5 + ((i / totalChunks) * 75));
+		setProgress(pct, totalChunks === 1
+			? 'Uploading...'
+			: 'Uploading part ' + (i + 1) + ' of ' + totalChunks + '...'
+		);
+
+		var partJson;
+		try {
+			var partRes = await fetch('/api/upload/part', {
+				method:  'PUT',
+				headers: {
+					'Content-Type':  'application/octet-stream',
+					'X-Upload-Id':   uploadId,
+					'X-R2-Key':      r2Key,
+					'X-Part-Number': String(i + 1),
+				},
+				body: chunk,
+			});
+			partJson = await partRes.json();
+			if (!partJson.ok) { abortUpload(partJson.error || 'Part upload failed'); return; }
+		} catch (e) { abortUpload('Network error: ' + e.message); return; }
+
+		parts.push({ etag: partJson.etag, part_number: partJson.part_number });
+	}
+
+	// ── Step 4: Complete upload ───────────────────────────────────────────────
+	setProgress(83, 'Finalizing upload...');
+	var endJson;
+	try {
+		var endRes = await fetch('/api/upload/end', {
+			method:  'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body:    JSON.stringify({
+				upload_id: uploadId,
+				r2_key:    r2Key,
+				sha256:    uploadHash,
+				filename:  uploadFile.name,
+				file_size: uploadFile.size,
+				parts:     parts,
+			}),
+		});
+		endJson = await endRes.json();
+		if (!endJson.ok) { abortUpload(endJson.error || 'Upload finalize failed'); return; }
+	} catch (e) { abortUpload('Network error: ' + e.message); return; }
+
+	// ── Step 5: Scan ─────────────────────────────────────────────────────────
+	setProgress(88, 'Scanning...');
+	var scanToken;
+	try {
+		resetTurnstile();
+		scanToken = await getTurnstileToken();
+	} catch (e) { abortUpload('Verification failed: ' + e.message); return; }
+
+	setProgress(92, 'Analyzing package...');
+	try {
+		var scanRes = await fetch('/api/scan?format=json', {
+			method:  'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body:    JSON.stringify({
+				url:                   endJson.url,
+				file_id:               endJson.file_id,
+				expected_sha256:       endJson.sha256,
+				filename:              uploadFile.name,
+				file_size:             uploadFile.size,
+				cf_turnstile_response: scanToken,
+			}),
 		});
 
-		$('upload-progress-fill').style.width = '100%';
-		$('upload-progress-text').textContent = 'Done!';
+		setProgress(100, 'Done!');
+		var cache = scanRes.headers.get('X-Cache') || '';
+		setUploadStatus(scanRes.ok, scanRes.ok
+			? '200 OK' + (cache ? ' [' + cache + ']' : '')
+			: scanRes.status + ' ' + scanRes.statusText
+		);
 
-		var text = await scanRes.text();
-		setStatus($('upload-status'), scanRes.ok, scanRes.ok ? '200 OK' : scanRes.status);
+		var text   = await scanRes.text();
+		var parsed = null;
+		try { parsed = JSON.parse(text); } catch (_) {}
 
-		try {
-			setResult($('upload-result'), JSON.stringify(JSON.parse(text), null, 2));
-		} catch (_) {
-			setResult($('upload-result'), text);
+		// Navigate to the detail page so the user sees the full VirusTotal-style view.
+		// The detail panel fetches from /api/history/:sha256 (KV-cached).
+		var resultSha = (parsed && (parsed.sha256 || (parsed.scan_result && parsed.scan_result.file && parsed.scan_result.file.sha256))) || endJson.sha256;
+		if (scanRes.ok && resultSha) {
+			navigate('/detail/' + resultSha);
+		} else {
+			// Fallback: show raw JSON inline if navigation target is unavailable
+			var raw = $('upload-result-raw');
+			if (raw) {
+				raw.textContent = parsed ? JSON.stringify(parsed, null, 2) : text;
+				raw.style.display = 'block';
+				var structured = $('upload-result-structured');
+				if (structured) structured.style.display = 'block';
+			}
 		}
-
-		if (sanitize && scanRes.ok && (scanRes.headers.get('content-type') || '').includes('octet-stream')) {
-			var blob = await scanRes.blob();
-			var a = document.createElement('a');
-			a.href = URL.createObjectURL(blob);
-			a.download = uploadFile.name.replace(/\.unitypackage$/i, '') + '-sanitized.unitypackage';
-			a.click();
-		}
-
 	} catch (e) {
-		setStatus($('upload-status'), false, 'NETWORK ERROR');
-		setResult($('upload-result'), 'Error: ' + e.message);
+		abortUpload('Scan error: ' + e.message);
+		return;
 	} finally {
-		setTimeout(function () { $('upload-progress').style.display = 'none'; }, 1200);
+		hideProgress();
 	}
+}
+
+// ── Structured result renderer ────────────────────────────────────────────────
+
+function renderScanResult(sr) {
+	var structured = $('upload-result-structured');
+	if (!structured) return;
+	structured.style.display = 'block';
+	$('upload-result-raw').textContent = JSON.stringify(sr, null, 2);
+
+	var level = (sr.risk && sr.risk.level) || 'UNKNOWN';
+	var score = (sr.risk && sr.risk.score) || 0;
+	$('result-verdict-block').innerHTML =
+		riskBadge(level).outerHTML +
+		'<span style="font-family:var(--font-mono);font-size:24px;font-weight:600;margin-left:12px;color:var(--text)">' + score + '</span>';
+
+	$('result-meta-block').innerHTML =
+		'<div>' + ((sr.file && sr.file.path) || 'File') + '</div>' +
+		'<div style="font-family:var(--font-mono);color:var(--text-dim);margin-top:4px">' + formatDuration(sr.scan_duration_ms) + '</div>';
+
+	var findings = sr.findings || [];
+	var crit = 0, high = 0, med = 0, low = 0;
+	findings.forEach(function (f) {
+		var s = (f.severity || '').toLowerCase();
+		if (s === 'critical') crit++;
+		else if (s === 'high') high++;
+		else if (s === 'medium') med++;
+		else low++;
+	});
+
+	$('result-severity-bar').innerHTML =
+		'<div class="sev-count"><span class="badge badge-critical">CRIT</span> <span class="count">' + crit + '</span></div>' +
+		'<div class="sev-count"><span class="badge badge-high">HIGH</span> <span class="count">' + high + '</span></div>' +
+		'<div class="sev-count"><span class="badge badge-medium">MED</span> <span class="count">' + med  + '</span></div>' +
+		'<div class="sev-count"><span class="badge badge-low">LOW</span> <span class="count">'  + low  + '</span></div>';
+
+	var html = '';
+	if (findings.length === 0) {
+		html = '<p style="color:var(--text-muted);font-family:var(--font-mono);padding:16px">No findings. Package is clean.</p>';
+	} else {
+		findings.forEach(function (f) {
+			var sev = (f.severity || 'low').toLowerCase();
+			html +=
+				'<div class="finding-card" data-finding-sev="' + sev + '">' +
+				'<div class="finding-card-header">' +
+				'<span class="severity-badge ' + sev + '">' + (f.severity || 'low') + '</span>' +
+				'<span class="finding-card-detail">' + (f.detail || f.id) + '</span>' +
+				'<span class="finding-card-points">' + (f.points || 0) + ' pts</span>' +
+				'</div>' +
+				(f.location ? '<div class="finding-card-file">' + f.location + '</div>' : '') +
+				'<div class="finding-card-footer"><span>ID: ' + f.id + '</span></div>' +
+				'</div>';
+		});
+	}
+	$('result-findings-list').innerHTML = html;
 }

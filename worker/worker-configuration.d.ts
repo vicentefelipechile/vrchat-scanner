@@ -9,6 +9,7 @@ declare namespace Cloudflare {
 	interface Env {
 		UPLOAD_BUCKET: R2Bucket;
 		SCAN_CACHE_DB: D1Database;
+		RESULT_CACHE: KVNamespace;
 		UPLOAD_RATE_LIMITER: RateLimit;
 		API_RATE_LIMITER: RateLimit;
 		TURNSTILE_SITEKEY: "0x4AAAAAADGqpmoCAv2qEqDD";

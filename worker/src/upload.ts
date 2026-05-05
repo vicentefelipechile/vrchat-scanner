@@ -1,15 +1,16 @@
 // =========================================================================================================
 // FILE UPLOAD — R2 upload + D1 logging
 // =========================================================================================================
-// Handles multipart file upload from the SPA:
-//   1. Receives the file via multipart/form-data
-//   2. Computes SHA-256
-//   3. Stores in R2 bucket temporarily (1-hour TTL via lifecycle)
-//   4. Generates a pre-signed download URL for the container
-//   5. Returns URL + metadata to the SPA for scanning
+// Handles multipart file upload from the SPA via three-step protocol:
+//   POST /api/upload/start  — initiates an R2 multipart upload, returns upload_id + r2_key
+//   PUT  /api/upload/part   — uploads one chunk (≥5 MB except last), returns etag + part_number
+//   POST /api/upload/end    — completes the multipart upload, returns download URL for scanning
+//
+// Turnstile is verified only on /start.  /part and /end are authenticated implicitly
+// by the upload_id (opaque token issued by R2 createMultipartUpload).
 //
 // The R2 bucket must have a lifecycle rule to expire objects under
-// uploads/* after 1 hour (or the Worker deletes them post-scan).
+// uploads/* after 1 hour (or the Worker deletes them post-scan via cleanupUpload).
 // =========================================================================================================
 
 // =========================================================================================================
@@ -244,5 +245,144 @@ export async function cleanupUpload(
 		}
 	} catch (e) {
 		console.error('Failed to cleanup upload', e);
+	}
+}
+
+// =========================================================================================================
+// Multipart upload — three-step protocol
+// =========================================================================================================
+
+export interface MultipartStartResult {
+	upload_id: string;
+	r2_key: string;
+	error?: string;
+}
+
+export interface MultipartPartResult {
+	etag: string;
+	part_number: number;
+	error?: string;
+}
+
+export interface MultipartEndResult {
+	url: string;
+	sha256: string;
+	filename: string;
+	file_size: number;
+	file_id: string;
+	error?: string;
+}
+
+/**
+ * Step 1 — Initiate an R2 multipart upload.
+ *
+ * Expects a JSON body: { filename, sha256, file_size, cf_turnstile_response }
+ * Turnstile must be validated by the route before calling this function.
+ * Returns an opaque upload_id and the R2 key that subsequent /part calls must supply.
+ */
+export async function startMultipartUpload(
+	request: Request,
+	bucket: R2Bucket,
+): Promise<MultipartStartResult> {
+	let body: any;
+	try { body = await request.json(); } catch {
+		return { upload_id: '', r2_key: '', error: 'Invalid JSON body' };
+	}
+
+	const filename = String(body.filename || '').trim();
+	const sha256   = String(body.sha256   || '').trim().toLowerCase();
+	const fileSize = Number(body.file_size || 0);
+
+	if (!filename || !sha256) {
+		return { upload_id: '', r2_key: '', error: 'filename and sha256 are required' };
+	}
+	if (fileSize > MAX_UPLOAD_SIZE) {
+		return { upload_id: '', r2_key: '', error: `File too large. Maximum is ${MAX_UPLOAD_SIZE / 1024 / 1024} MB` };
+	}
+
+	const r2Key = `${UPLOAD_PREFIX}/${sha256.substring(0, 2)}/${sha256}/${encodeURIComponent(filename)}`;
+
+	try {
+		const mp = await bucket.createMultipartUpload(r2Key, {
+			httpMetadata: { contentType: 'application/octet-stream' },
+			customMetadata: {
+				sha256,
+				'original-name': filename,
+				'upload-timestamp': String(Date.now()),
+			},
+		});
+		return { upload_id: mp.uploadId, r2_key: r2Key };
+	} catch (e) {
+		console.error('createMultipartUpload failed', e);
+		return { upload_id: '', r2_key: '', error: 'Failed to initiate upload' };
+	}
+}
+
+/**
+ * Step 2 — Upload one chunk of the file.
+ *
+ * Expects headers: X-Upload-Id, X-R2-Key, X-Part-Number (1-indexed).
+ * Body must be raw binary (application/octet-stream).
+ * All parts except the last must be ≥ 5 MB (R2 requirement).
+ * Returns the part's etag which must be collected for the /end call.
+ */
+export async function uploadPart(
+	request: Request,
+	bucket: R2Bucket,
+): Promise<MultipartPartResult> {
+	const uploadId  = request.headers.get('X-Upload-Id')   || '';
+	const r2Key     = request.headers.get('X-R2-Key')      || '';
+	const partNumber = parseInt(request.headers.get('X-Part-Number') || '0', 10);
+
+	if (!uploadId || !r2Key || !partNumber) {
+		return { etag: '', part_number: 0, error: 'X-Upload-Id, X-R2-Key, and X-Part-Number headers are required' };
+	}
+
+	try {
+		const mp   = bucket.resumeMultipartUpload(r2Key, uploadId);
+		const part = await mp.uploadPart(partNumber, request.body!);
+		return { etag: part.etag, part_number: part.partNumber };
+	} catch (e) {
+		console.error('uploadPart failed', e);
+		return { etag: '', part_number: 0, error: 'Failed to upload part' };
+	}
+}
+
+/**
+ * Step 3 — Complete the multipart upload and return a download URL.
+ *
+ * Expects JSON: { upload_id, r2_key, sha256, filename, file_size, parts: [{etag, part_number}] }
+ * After completion the file is available via GET /api/download/:sha256.
+ */
+export async function completeMultipartUpload(
+	request: Request,
+	bucket: R2Bucket,
+): Promise<MultipartEndResult> {
+	let body: any;
+	try { body = await request.json(); } catch {
+		return { url: '', sha256: '', filename: '', file_size: 0, file_id: '', error: 'Invalid JSON body' };
+	}
+
+	const uploadId = String(body.upload_id || '');
+	const r2Key    = String(body.r2_key    || '');
+	const sha256   = String(body.sha256    || '');
+	const filename = String(body.filename  || '');
+	const fileSize = Number(body.file_size || 0);
+	const parts    = Array.isArray(body.parts) ? body.parts as { etag: string; part_number: number }[] : [];
+
+	if (!uploadId || !r2Key || !sha256 || parts.length === 0) {
+		return { url: '', sha256: '', filename: '', file_size: 0, file_id: '', error: 'upload_id, r2_key, sha256, and parts are required' };
+	}
+
+	try {
+		const mp = bucket.resumeMultipartUpload(r2Key, uploadId);
+		await mp.complete(parts.map((p) => ({ etag: p.etag, partNumber: p.part_number })));
+
+		const origin = new URL(request.url).origin;
+		const downloadUrl = `${origin}/api/download/${sha256}`;
+		return { url: downloadUrl, sha256, filename, file_size: fileSize, file_id: sha256 };
+	} catch (e) {
+		console.error('completeMultipartUpload failed', e);
+		return { url: '', sha256: '', filename: '', file_size: 0, file_id: '', error: 'Failed to complete upload' };
 	}
 }
