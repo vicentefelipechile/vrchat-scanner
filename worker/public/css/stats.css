@@ -1,60 +1,79 @@
 /* ========================================================================== */
-/* Stats grid                                                                 */
+/* Stats Grid & Bars — Flat minimal                                           */
 /* ========================================================================== */
 
 .stats-grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-	gap: 14px;
-	margin-bottom: 28px;
+	gap: 16px;
+	margin-bottom: 32px;
 }
 
 .stat-card {
-	background: var(--card-bg);
+	background: var(--surface);
 	border: 1px solid var(--border);
-	border-radius: var(--radius);
-	padding: 20px;
+	padding: 24px;
 	text-align: center;
-	transition: border-color var(--transition);
 }
 
-.stat-card:hover { border-color: var(--accent); }
-.stat-card.safe { border-top: 3px solid var(--success); }
-.stat-card.danger { border-top: 3px solid var(--danger); }
+.stat-card-safe { border-top: 3px solid var(--clean); }
+.stat-card-danger { border-top: 3px solid var(--danger); }
 
 .stat-value {
+	font-family: var(--font-mono);
 	font-size: 32px;
-	font-weight: 800;
 	color: var(--text);
-	letter-spacing: -0.5px;
-	line-height: 1.1;
+	line-height: 1;
+	margin-bottom: 8px;
 }
 
 .stat-label {
-	font-size: 11px;
-	color: var(--muted);
-	margin-top: 6px;
+	font-size: 10px;
+	color: var(--text-muted);
 	text-transform: uppercase;
-	letter-spacing: 0.6px;
+	letter-spacing: 1px;
 	font-family: var(--font-ui);
 }
 
-.risk-distribution { margin-top: 8px; padding: 20px; background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); }
+/* Risk Distribution */
+.risk-bars {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	margin-top: 16px;
+}
 
-.risk-bars { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
-
-.risk-bar-row { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+.risk-bar-row {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+}
 
 .risk-bar-label {
-	width: 72px;
+	width: 80px;
 	text-align: right;
-	font-weight: 700;
-	text-transform: uppercase;
+	font-family: var(--font-mono);
 	font-size: 10px;
-	letter-spacing: 0.5px;
-	font-family: var(--font-ui);
+	font-weight: 600;
+	color: var(--text-dim);
 }
 
-.risk-bar-track { flex: 1; height: 22px; background: var(--input-bg); border-radius: 4px; overflow: hidden; position: relative; }
-.risk-bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; min-width: 3px; }
-.risk-bar-count { width: 44px; font-size: 11px; font-weight: 600; color: var(--muted); font-family: var(--font-ui); }
+.risk-bar-track {
+	flex: 1;
+	height: 12px;
+	background: var(--surface-2);
+	position: relative;
+}
+
+.risk-bar-fill {
+	height: 100%;
+	transition: width 0.4s ease;
+	min-width: 2px;
+}
+
+.risk-bar-count {
+	width: 48px;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	color: var(--text-muted);
+}

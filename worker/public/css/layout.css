@@ -1,149 +1,194 @@
 /* ========================================================================== */
-/* Main area                                                                  */
+/* Layout & global elements — flat, rectangular                               */
 /* ========================================================================== */
 
 main {
 	flex: 1;
-	padding: 28px 32px;
+	padding: 32px 36px;
 	overflow-y: auto;
-	max-width: 1100px;
+	max-width: 1080px;
 }
 
-.panel { display: none; animation: fadeIn 0.2s ease; }
-.panel.active { display: block; }
+/* Panels */
+.panel         { display: none; }
+.panel.active  { display: block; animation: fadeIn 0.1s ease; }
 
 @keyframes fadeIn {
-	from { opacity: 0; transform: translateY(4px); }
-	to { opacity: 1; transform: translateY(0); }
+	from { opacity: 0; }
+	to   { opacity: 1; }
 }
 
-h2 {
-	font-size: 16px;
-	font-weight: 700;
-	color: var(--text);
-	margin-bottom: 6px;
-}
-
-.panel-desc {
-	font-size: 12px;
-	color: var(--muted);
-	margin-bottom: 20px;
+/* Panel header */
+.panel-header {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 8px;
 	padding-bottom: 16px;
+	margin-bottom: 24px;
 	border-bottom: 1px solid var(--border);
 }
 
-h3 {
+.panel-header h2 {
+	font-family: var(--font-mono);
 	font-size: 13px;
 	font-weight: 600;
 	color: var(--text);
-	margin-bottom: 10px;
-}
-
-/* ========================================================================== */
-/* Forms                                                                      */
-/* ========================================================================== */
-
-.field { margin-bottom: 14px; }
-
-.field label {
-	display: block;
-	font-size: 11px;
-	font-weight: 600;
-	color: var(--muted);
-	margin-bottom: 4px;
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
+}
+
+.panel-header-sub {
+	font-size: 11px;
+	color: var(--text-muted);
 	font-family: var(--font-ui);
 }
 
-.field input,
-.field select,
-.field textarea {
-	width: 100%;
-	max-width: 560px;
-	padding: 9px 12px;
-	font-family: var(--font);
-	font-size: 13px;
-	color: var(--text);
-	background: var(--input-bg);
-	border: 1px solid var(--border);
-	border-radius: var(--radius-sm);
-	outline: none;
-	transition: border-color var(--transition), box-shadow var(--transition);
-}
-
-.field input:focus,
-.field select:focus,
-.field textarea:focus {
-	border-color: var(--accent);
-	box-shadow: 0 0 0 3px var(--accent-glow);
-}
-
-.field textarea { height: 140px; resize: vertical; max-width: 560px; }
-.field input[type="checkbox"] { width: auto; margin-right: 6px; accent-color: var(--accent); }
-
-.field-row {
+.panel-controls {
 	display: flex;
-	gap: 16px;
-	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
 }
 
-.field-inline { flex: 1; min-width: 160px; max-width: 270px; }
-.field-inline input, .field-inline select { max-width: 100%; }
-
-/* Buttons
-   ========================================================================== */
-
-button {
-	padding: 9px 22px;
-	font-family: var(--font-ui);
+/* Headings */
+h2 {
+	font-family: var(--font-mono);
 	font-size: 13px;
 	font-weight: 600;
 	color: var(--text);
-	background: var(--btn-bg);
+	letter-spacing: 0.3px;
+}
+
+h3 {
+	font-size: 11px;
+	font-weight: 700;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.8px;
+	font-family: var(--font-ui);
+}
+
+/* ========================================================================== */
+/* Buttons                                                                     */
+/* ========================================================================== */
+
+button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 16px;
+	font-family: var(--font-ui);
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-muted);
+	background: var(--surface-2);
 	border: 1px solid var(--border);
-	border-radius: var(--radius-sm);
+	border-radius: var(--radius);
 	cursor: pointer;
-	transition: all var(--transition);
-	margin-bottom: 14px;
+	transition: color var(--transition), background var(--transition), border-color var(--transition);
+	margin: 0;
+	white-space: nowrap;
 }
 
 button:hover {
-	background: var(--btn-hover);
-	border-color: var(--accent);
+	color: var(--text);
+	background: var(--surface-3);
+	border-color: var(--border-hi);
 }
 
-button:active { background: var(--btn-active); }
+button:active {
+	background: var(--surface);
+}
 
+/* Primary — white fill */
 .btn-primary {
 	background: var(--accent);
 	border-color: var(--accent);
-	color: #fff;
+	color: var(--bg);
 	font-weight: 700;
 }
 
 .btn-primary:hover {
-	background: #3a8ae0;
-	border-color: #3a8ae0;
+	background: #d4d4d4;
+	border-color: #d4d4d4;
+	color: var(--bg);
 }
 
-.btn-secondary {
+/* Outline */
+.btn-outline {
 	background: transparent;
-	border-color: var(--border);
-	color: var(--muted);
-	opacity: 0.85;
+	border-color: var(--border-hi);
+	color: var(--text-muted);
 }
 
-.btn-secondary:hover {
-	opacity: 1;
-	color: var(--text);
+.btn-outline:hover {
 	border-color: var(--accent);
+	color: var(--text);
 }
 
-.btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
-
-.btn-back {
-	font-size: 12px;
-	padding: 6px 14px;
-	margin-bottom: 10px;
+/* Ghost — minimal */
+.btn-ghost {
+	background: transparent;
+	border-color: transparent;
+	color: var(--text-dim);
 }
+
+.btn-ghost:hover {
+	color: var(--text-muted);
+	background: var(--accent-dim);
+	border-color: var(--border);
+}
+
+.btn-sm {
+	padding: 5px 10px;
+	font-size: 11px;
+}
+
+.btn-group {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+	align-items: center;
+}
+
+/* ========================================================================== */
+/* Status inline                                                               */
+/* ========================================================================== */
+
+.status-inline {
+	font-size: 11px;
+	font-weight: 600;
+	font-family: var(--font-mono);
+	color: var(--text-dim);
+}
+
+.status-inline.ok      { color: var(--success); }
+.status-inline.err     { color: var(--danger); }
+.status-inline.pending { color: var(--warning); animation: blink 1s step-start infinite; }
+
+@keyframes blink {
+	0%, 100% { opacity: 1; }
+	50%       { opacity: 0.35; }
+}
+
+/* Status bar */
+.status-bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 14px;
+	border: 1px solid var(--border);
+	margin-bottom: 16px;
+	max-width: 640px;
+	background: var(--surface);
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.status-bar.ok   { border-left: 3px solid var(--success); }
+.status-bar.err  { border-left: 3px solid var(--danger); }
+.status-bar.info { border-left: 3px solid var(--accent); }
+
+.status-icon { font-size: 13px; }
+.status-text { color: var(--text); }

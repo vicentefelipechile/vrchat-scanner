@@ -1,51 +1,67 @@
 /* ========================================================================== */
-/* Design tokens & reset                                                      */
+/* Design tokens — Flat / Rectangular / Minimal                               */
 /* ========================================================================== */
 
 :root {
-	--bg: #0b0e14;
-	--sidebar-bg: #11151c;
-	--border: #252a33;
-	--border-light: #1e242e;
-	--text: #d4d8de;
-	--muted: #6e7887;
-	--accent: #4d9fff;
-	--accent-glow: rgba(77, 159, 255, 0.12);
-	--danger: #f0424e;
-	--danger-bg: rgba(240, 66, 78, 0.08);
-	--warning: #e0a630;
-	--success: #38b757;
-	--panel-bg: #0b0e14;
-	--input-bg: #191d26;
-	--btn-bg: #1a1f2b;
-	--btn-hover: #232a36;
-	--btn-active: #2a3140;
-	--card-bg: #11151c;
-	--critical: #f0424e;
-	--high: #f07b3e;
-	--medium: #e0a630;
-	--low: #4d9fff;
-	--clean: #38b757;
-	--radius: 8px;
-	--radius-sm: 5px;
-	--transition: 0.18s ease;
-	--font: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
-	--font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	/* Core palette — near-black bg, white-ish text, single accent */
+	--bg:            #0d0d0d;
+	--surface:       #141414;
+	--surface-2:     #1a1a1a;
+	--surface-3:     #222222;
+	--border:        #2e2e2e;
+	--border-hi:     #3d3d3d;
+	--text:          #e8e8e8;
+	--text-muted:    #717171;
+	--text-dim:      #4a4a4a;
+
+	/* Single accent — stark white/off-white */
+	--accent:        #ffffff;
+	--accent-dim:    rgba(255, 255, 255, 0.06);
+
+	/* Semantic risk colors — flat, no gradients */
+	--critical:      #ff3a3a;
+	--high:          #ff7a30;
+	--medium:        #f5a623;
+	--low:           #4a9eff;
+	--clean:         #3ecf6e;
+	--unknown:       #717171;
+
+	/* Misc semantic */
+	--danger:        #ff3a3a;
+	--success:       #3ecf6e;
+	--warning:       #f5a623;
+
+	/* Shape — rectangular, minimal rounding */
+	--radius:        2px;
+	--radius-sm:     2px;
+
+	/* Motion */
+	--transition:    0.12s ease;
+
+	/* Typography */
+	--font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+	--font-ui:   'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
 
 body {
-	font-family: var(--font);
+	font-family: var(--font-ui);
+	font-size: 13px;
 	background: var(--bg);
 	color: var(--text);
 	display: flex;
 	min-height: 100vh;
 	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
 }
 
 /* Scrollbar */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+::-webkit-scrollbar          { width: 4px; height: 4px; }
+::-webkit-scrollbar-track    { background: transparent; }
+::-webkit-scrollbar-thumb    { background: var(--border-hi); }
+::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
