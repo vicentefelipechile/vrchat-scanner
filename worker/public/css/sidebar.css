@@ -155,8 +155,30 @@
 	border-top: 1px solid var(--border);
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
+	gap: 4px;
 	font-size: 10px;
 	color: var(--text-dim);
+	font-family: var(--font-ui);
+}
+
+.sidebar-footer strong {
+	color: var(--text-muted);
+	font-weight: 600;
+}
+
+.sidebar-footer-link {
+	color: var(--text-dim);
+	text-decoration: none;
 	font-family: var(--font-mono);
+	font-size: 10px;
+	transition: color var(--transition);
+	border-left: none !important; /* override sidebar a rule */
+	padding: 0 !important;
+	background: none !important;
+	display: inline !important;
+}
+
+.sidebar-footer-link:hover {
+	color: var(--text-muted) !important;
+	background: none !important;
 }

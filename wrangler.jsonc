@@ -16,8 +16,8 @@
       "scheduling_policy": "default",
       "class_name": "ScannerContainer",
       "image": "registry.cloudflare.com/3927234333597c7a6b80c66b997b6257/vrcstorage-scanner-scannercontainer:6adfb356",
-      "max_instances": 3,
-      "instance_type": "basic"
+      "max_instances": 2,
+      "instance_type": "standard-1"
     }
   ],
   "d1_databases": [
