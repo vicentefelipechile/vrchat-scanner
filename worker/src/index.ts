@@ -45,6 +45,7 @@ import { buildCacheKey, getCachedScan, getCacheStats, putCachedScan } from './ca
 import { getScanHistory, getScanByHash, searchScans, putScanResult, getStats } from './history';
 import { handleUpload, serveDownload, cleanupUpload, startMultipartUpload, uploadPart, completeMultipartUpload } from './upload';
 import { kvGet, kvGetText, kvPut, kvKeyScan, kvKeyDetail, kvKeyStats, kvKeyCacheStats, KV_TTL_SCAN, KV_TTL_STATS, KV_TTL_CSTATS } from './kv';
+import { buildEmbedHtml } from './embed';
 
 // =========================================================================================================
 // Rate limiting
@@ -580,6 +581,68 @@ app.get('/api/stats', async (c) => {
 	const stats = await getStats(c.env.SCAN_CACHE_DB);
 	c.executionCtx.waitUntil(kvPut(c.env.RESULT_CACHE, kvKeyStats(), stats, KV_TTL_STATS));
 	return c.json({ ...stats, ok: true });
+});
+
+// ── GET /file/:sha256 ───────────────────────────────────────────────────────
+// Share-link handler — returns the SPA shell with injected Open Graph and
+// Twitter Card meta tags so Discord, Twitter/X, and forum crawlers render
+// a rich preview when someone shares a direct link to a scan result.
+//
+// Real browsers get the same HTML document; the SPA JS takes over via
+// DOMContentLoaded → routePath('/file/:sha256') → showDetail(sha256).
+//
+// Flow:
+//   1. Look up the scan in KV (fast) then D1 (fallback).
+//   2. Fetch /index.html from Cloudflare Static Assets via env.ASSETS.
+//   3. Inject <meta> OG + Twitter Card tags before </head>.
+//   4. Return the enriched HTML with a 10-minute Cache-Control.
+
+app.get('/file/:sha256', async (c) => {
+	const sha256 = c.req.param('sha256').toLowerCase();
+
+	// Validate: must be a 64-char lowercase hex string
+	if (!/^[0-9a-f]{64}$/.test(sha256)) {
+		// Not a valid hash — let static assets handle it (will 404 or SPA)
+		return c.env.ASSETS.fetch(c.req.raw);
+	}
+
+	// ── 1. Fetch scan detail ─────────────────────────────────────────────────
+	let detail: import('./history').ScanDetail | null = null;
+	try {
+		// KV first (sub-millisecond)
+		const kvDetail = await kvGet<import('./history').ScanDetail>(c.env.RESULT_CACHE, kvKeyDetail(sha256));
+		if (kvDetail) {
+			detail = kvDetail;
+		} else {
+			// D1 fallback
+			detail = await getScanByHash(c.env.SCAN_CACHE_DB, sha256);
+			// Warm KV for next request
+			if (detail) {
+				c.executionCtx.waitUntil(kvPut(c.env.RESULT_CACHE, kvKeyDetail(sha256), detail, KV_TTL_SCAN));
+			}
+		}
+	} catch {
+		// Non-fatal: detail stays null, we still serve the SPA
+	}
+
+	// ── 2. Fetch index.html from Static Assets ───────────────────────────────
+	const indexRequest = new Request(new URL('/', c.req.url).toString());
+	const indexResponse = await c.env.ASSETS.fetch(indexRequest);
+	const indexHtml = await indexResponse.text();
+
+	// ── 3. Inject OG meta tags ───────────────────────────────────────────────
+	const origin = new URL(c.req.url).origin;
+	const enrichedHtml = buildEmbedHtml(detail, sha256, origin, indexHtml);
+
+	// ── 4. Return enriched HTML ──────────────────────────────────────────────
+	return new Response(enrichedHtml, {
+		status: 200,
+		headers: {
+			'Content-Type': 'text/html; charset=utf-8',
+			// 10-minute shared cache; private browsers still get fresh on reload
+			'Cache-Control': 'public, max-age=600, stale-while-revalidate=60',
+		},
+	});
 });
 
 // =========================================================================================================

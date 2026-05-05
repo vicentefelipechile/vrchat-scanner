@@ -1,274 +1,294 @@
 <!doctype html>
 <html lang="en">
+
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="vrcstorage-scanner — Static analysis of Unity/VRChat packages. Detect malicious behaviors without executing content.">
-<title>vrcstorage-scanner</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/variables.css">
-<link rel="stylesheet" href="/css/sidebar.css">
-<link rel="stylesheet" href="/css/layout.css">
-<link rel="stylesheet" href="/css/components.css">
-<link rel="stylesheet" href="/css/detail.css">
-<link rel="stylesheet" href="/css/stats.css">
-<link rel="stylesheet" href="/css/responsive.css">
-<link rel="preconnect" href="https://challenges.cloudflare.com">
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onTurnstileLoad" async defer></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description"
+    content="vrcstorage-scanner — Static analysis of Unity/VRChat packages. Detect malicious behaviors without executing content.">
+  <title>vrcstorage-scanner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/css/variables.css">
+  <link rel="stylesheet" href="/css/sidebar.css">
+  <link rel="stylesheet" href="/css/layout.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/detail.css">
+  <link rel="stylesheet" href="/css/stats.css">
+  <link rel="stylesheet" href="/css/responsive.css">
+  <link rel="preconnect" href="https://challenges.cloudflare.com">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onTurnstileLoad" async
+    defer></script>
 </head>
+
 <body>
 
-<!-- ========================================================================= -->
-<!-- Sidebar                                                                    -->
-<!-- ========================================================================= -->
-<nav class="sidebar">
-  <div class="sidebar-brand">
-    <div class="brand-logo">VRC</div>
-    <div class="brand-info">
-      <span class="brand-name">vrcstorage-scanner</span>
-      <span class="brand-sub">Package Analyzer</span>
-    </div>
-  </div>
-
-  <div class="search-box">
-    <input id="global-search" type="text" placeholder="Hash or filename...">
-    <button id="global-search-btn" title="Search">↵</button>
-  </div>
-
-  <div class="sidebar-section">MAIN</div>
-  <a data-panel="upload" class="active">
-    <span class="nav-icon">↑</span> Upload &amp; Scan
-  </a>
-  <a data-panel="history">
-    <span class="nav-icon">≡</span> History
-  </a>
-  <a data-panel="platform-stats">
-    <span class="nav-icon">◈</span> Statistics
-  </a>
-
-  <div class="sidebar-footer">
-    <span>Made by <strong>SummerTYT</strong> with help from <strong>anonberry</strong></span>
-    <a href="https://vrcstorage.lat/" target="_blank" rel="noopener" class="sidebar-footer-link">vrcstorage.lat ↗</a>
-  </div>
-</nav>
-
-<!-- ========================================================================= -->
-<!-- Main content                                                               -->
-<!-- ========================================================================= -->
-<main>
-
-<!-- ========================================================================= -->
-<!-- Upload panel                                                               -->
-<!-- ========================================================================= -->
-<section id="panel-upload" class="panel active">
-  <div class="panel-header">
-    <h2>Upload &amp; Scan</h2>
-    <span class="panel-header-sub">Supported: .unitypackage — Max 500 MB</span>
-  </div>
-
-  <div id="upload-dropzone" class="dropzone">
-    <div class="dropzone-inner">
-      <div class="dropzone-icon">↑</div>
-      <p class="dropzone-title">Drag &amp; drop a file here</p>
-      <p class="dropzone-hint">Only .unitypackage</p>
-    </div>
-    <input type="file" id="upload-file-input" accept=".unitypackage">
-  </div>
-
-  <div id="upload-progress" class="progress-wrap" style="display:none">
-    <div class="progress-bar">
-      <div class="progress-fill" id="upload-progress-fill"></div>
-    </div>
-    <span id="upload-progress-text" class="progress-label">Uploading...</span>
-  </div>
-
-  <div id="upload-info" class="upload-info" style="display:none">
-    <div class="info-grid">
-      <div class="info-row">
-        <span class="info-label">FILE</span>
-        <span class="info-value" id="upload-filename"></span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">SIZE</span>
-        <span class="info-value" id="upload-filesize"></span>
-      </div>
-      <div class="info-row info-row-full">
-        <span class="info-label">SHA-256</span>
-        <code id="upload-sha256"></code>
+  <!-- ========================================================================= -->
+  <!-- Sidebar                                                                    -->
+  <!-- ========================================================================= -->
+  <nav class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-logo">VRC</div>
+      <div class="brand-info">
+        <span class="brand-name">vrcstorage-scanner</span>
+        <span class="brand-sub">Package Analyzer</span>
       </div>
     </div>
 
-    <div id="turnstile-container" class="turnstile-wrap"></div>
-
-    <div class="btn-group">
-      <button id="upload-scan-btn" class="btn-primary">Scan Now</button>
-      <button id="upload-sanitize-btn" class="btn-coming-soon" disabled title="Not available yet">Scan &amp; Sanitize</button>
-      <button id="upload-reset-btn" class="btn-ghost">Reset</button>
+    <div class="search-box">
+      <input id="global-search" type="text" placeholder="Hash or filename...">
+      <button id="global-search-btn" title="Search">↵</button>
     </div>
-  </div>
 
-  <div id="upload-status-bar" class="status-bar" style="display:none">
-    <span id="upload-status-icon" class="status-icon"></span>
-    <span id="upload-status-text" class="status-text"></span>
-  </div>
+    <div class="sidebar-section">MAIN</div>
+    <a data-panel="upload" class="active">
+      <span class="nav-icon">↑</span> Upload &amp; Scan
+    </a>
+    <a data-panel="history">
+      <span class="nav-icon">≡</span> History
+    </a>
+    <a data-panel="platform-stats">
+      <span class="nav-icon">◈</span> Statistics
+    </a>
 
-  <!-- Structured scan result -->
-  <div id="upload-result-structured" style="display:none">
-    <div class="result-header">
-      <div class="result-verdict" id="result-verdict-block"></div>
-      <div class="result-meta" id="result-meta-block"></div>
+    <div class="sidebar-footer">
+      <span>Made by <strong>SummerTYT</strong> with help from <strong>anonberry</strong></span>
+      <a href="https://vrcstorage.lat/" target="_blank" rel="noopener" class="sidebar-footer-link">vrcstorage.lat</a>
     </div>
-    <div class="severity-bar" id="result-severity-bar"></div>
-    <div class="findings-list" id="result-findings-list"></div>
-    <div class="raw-toggle-wrap">
-      <button class="btn-ghost btn-sm collapsible" data-target="upload-result-raw">Show Raw JSON ▾</button>
-    </div>
-    <pre id="upload-result-raw" class="raw-result collapsible-content" style="display:none"></pre>
-  </div>
-</section>
+  </nav>
 
-<!-- ========================================================================= -->
-<!-- History panel                                                              -->
-<!-- ========================================================================= -->
-<section id="panel-history" class="panel">
-  <div class="panel-header">
-    <h2>Scan History</h2>
-    <div class="panel-controls">
-      <select id="history-risk-filter">
-        <option value="all">All risks</option>
-        <option value="critical">Critical</option>
-        <option value="high">High</option>
-        <option value="medium">Medium</option>
-        <option value="low">Low</option>
-        <option value="clean">Clean</option>
-      </select>
-      <button id="history-refresh-btn" class="btn-outline btn-sm">Refresh</button>
-      <span id="history-status" class="status-inline"></span>
-    </div>
-  </div>
+  <!-- ========================================================================= -->
+  <!-- Main content                                                               -->
+  <!-- ========================================================================= -->
+  <main>
 
-  <div class="table-wrap">
-    <table class="data-table" id="history-table">
-      <thead>
-        <tr>
-          <th>DATE</th>
-          <th>FILE</th>
-          <th>HASH</th>
-          <th>RISK</th>
-          <th>SCORE</th>
-          <th>FINDINGS</th>
-          <th>DURATION</th>
-        </tr>
-      </thead>
-      <tbody id="history-tbody">
-        <tr><td colspan="7" class="table-empty">Click Refresh to load scan history.</td></tr>
-      </tbody>
-    </table>
-  </div>
+    <!-- ========================================================================= -->
+    <!-- Upload panel                                                               -->
+    <!-- ========================================================================= -->
+    <section id="panel-upload" class="panel active">
+      <div class="panel-header">
+        <h2>Upload &amp; Scan</h2>
+        <span class="panel-header-sub">Supported: .unitypackage — Max 500 MB</span>
+      </div>
 
-  <div class="pagination" id="history-pagination" style="display:none"></div>
-</section>
+      <div id="upload-dropzone" class="dropzone">
+        <div class="dropzone-inner">
+          <div class="dropzone-icon">↑</div>
+          <p class="dropzone-title">Drag &amp; drop a file here</p>
+          <p class="dropzone-hint">Only .unitypackage</p>
+        </div>
+        <input type="file" id="upload-file-input" accept=".unitypackage">
+      </div>
 
-<!-- ========================================================================= -->
-<!-- Scan Detail panel                                                          -->
-<!-- ========================================================================= -->
-<section id="panel-detail" class="panel">
-  <div class="panel-header">
-    <button id="detail-back-btn" class="btn-ghost btn-sm">← Back to History</button>
-    <h2 id="detail-title">Scan Detail</h2>
-  </div>
+      <div id="upload-progress" class="progress-wrap" style="display:none">
+        <div class="progress-bar">
+          <div class="progress-fill" id="upload-progress-fill"></div>
+        </div>
+        <span id="upload-progress-text" class="progress-label">Uploading...</span>
+      </div>
 
-  <div class="detail-meta-grid" id="detail-meta">
-    <div class="skeleton-line"></div><div class="skeleton-line"></div>
-  </div>
+      <div id="upload-info" class="upload-info" style="display:none">
+        <div class="info-grid">
+          <div class="info-row">
+            <span class="info-label">FILE</span>
+            <span class="info-value" id="upload-filename"></span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">SIZE</span>
+            <span class="info-value" id="upload-filesize"></span>
+          </div>
+          <div class="info-row info-row-full">
+            <span class="info-label">SHA-256</span>
+            <code id="upload-sha256"></code>
+          </div>
+        </div>
 
-  <div class="detail-cols">
-    <div class="detail-col">
+        <div id="turnstile-container" class="turnstile-wrap"></div>
+
+        <div class="btn-group">
+          <button id="upload-scan-btn" class="btn-primary">Scan Now</button>
+          <button id="upload-sanitize-btn" class="btn-coming-soon" disabled title="Not available yet">Scan &amp;
+            Sanitize</button>
+          <button id="upload-reset-btn" class="btn-ghost">Reset</button>
+        </div>
+      </div>
+
+      <div id="upload-status-bar" class="status-bar" style="display:none">
+        <span id="upload-status-icon" class="status-icon"></span>
+        <span id="upload-status-text" class="status-text"></span>
+      </div>
+
+      <!-- Structured scan result -->
+      <div id="upload-result-structured" style="display:none">
+        <div class="result-header">
+          <div class="result-verdict" id="result-verdict-block"></div>
+          <div class="result-meta" id="result-meta-block"></div>
+        </div>
+        <div class="severity-bar" id="result-severity-bar"></div>
+        <div class="findings-list" id="result-findings-list"></div>
+        <div class="raw-toggle-wrap">
+          <button class="btn-ghost btn-sm collapsible" data-target="upload-result-raw">Show Raw JSON ▾</button>
+        </div>
+        <pre id="upload-result-raw" class="raw-result collapsible-content" style="display:none"></pre>
+      </div>
+    </section>
+
+    <!-- ========================================================================= -->
+    <!-- History panel                                                              -->
+    <!-- ========================================================================= -->
+    <section id="panel-history" class="panel">
+      <div class="panel-header">
+        <h2>Scan History</h2>
+        <div class="panel-controls">
+          <select id="history-risk-filter">
+            <option value="all">All risks</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+            <option value="clean">Clean</option>
+          </select>
+          <button id="history-refresh-btn" class="btn-outline btn-sm">Refresh</button>
+          <span id="history-status" class="status-inline"></span>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table" id="history-table">
+          <thead>
+            <tr>
+              <th>DATE</th>
+              <th>FILE</th>
+              <th>HASH</th>
+              <th>RISK</th>
+              <th>SCORE</th>
+              <th>FINDINGS</th>
+              <th>DURATION</th>
+            </tr>
+          </thead>
+          <tbody id="history-tbody">
+            <tr>
+              <td colspan="7" class="table-empty">Click Refresh to load scan history.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="pagination" id="history-pagination" style="display:none"></div>
+    </section>
+
+    <!-- ========================================================================= -->
+    <!-- Scan Detail panel                                                          -->
+    <!-- ========================================================================= -->
+    <section id="panel-detail" class="panel">
+      <div class="panel-header">
+        <button id="detail-back-btn" class="btn-ghost btn-sm">← Back to History</button>
+        <h2 id="detail-title">Scan Detail</h2>
+      </div>
+
+      <div class="detail-meta-grid" id="detail-meta">
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line"></div>
+      </div>
+
+      <div class="detail-cols">
+        <div class="detail-col">
+          <div class="detail-card">
+            <div class="detail-card-label">RISK SCORE</div>
+            <div id="detail-score">
+              <div class="skeleton-line"></div>
+            </div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-card-label">SEVERITY BREAKDOWN</div>
+            <div id="detail-severity">
+              <div class="skeleton-line"></div>
+            </div>
+          </div>
+        </div>
+        <div class="detail-col">
+          <div class="detail-card">
+            <div class="detail-card-label">FILE TREE</div>
+            <div id="detail-file-tree">
+              <div class="skeleton-line"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="detail-card">
-        <div class="detail-card-label">RISK SCORE</div>
-        <div id="detail-score"><div class="skeleton-line"></div></div>
+        <div class="detail-card-label-row">
+          <span class="detail-card-label">FINDINGS (<span id="detail-finding-count">0</span>)</span>
+          <div class="finding-filters" id="finding-filters">
+            <button class="sev-filter active" data-sev="all">All</button>
+            <button class="sev-filter" data-sev="critical">Critical</button>
+            <button class="sev-filter" data-sev="high">High</button>
+            <button class="sev-filter" data-sev="medium">Medium</button>
+            <button class="sev-filter" data-sev="low">Low</button>
+          </div>
+        </div>
+        <div id="detail-findings">
+          <div class="skeleton-line"></div>
+        </div>
       </div>
+
       <div class="detail-card">
-        <div class="detail-card-label">SEVERITY BREAKDOWN</div>
-        <div id="detail-severity"><div class="skeleton-line"></div></div>
+        <button class="btn-ghost btn-sm collapsible" data-target="detail-raw-content">Raw JSON ▾</button>
+        <pre id="detail-raw-content" class="raw-result collapsible-content" style="display:none"></pre>
       </div>
-    </div>
-    <div class="detail-col">
-      <div class="detail-card">
-        <div class="detail-card-label">FILE TREE</div>
-        <div id="detail-file-tree"><div class="skeleton-line"></div></div>
+    </section>
+
+    <!-- ========================================================================= -->
+    <!-- Platform Stats panel                                                       -->
+    <!-- ========================================================================= -->
+    <section id="panel-platform-stats" class="panel">
+      <div class="panel-header">
+        <h2>Platform Statistics</h2>
+        <div class="panel-controls">
+          <button id="platform-stats-btn" class="btn-outline btn-sm">Refresh</button>
+          <span id="platform-stats-status" class="status-inline"></span>
+        </div>
       </div>
-    </div>
-  </div>
 
-  <div class="detail-card">
-    <div class="detail-card-label-row">
-      <span class="detail-card-label">FINDINGS (<span id="detail-finding-count">0</span>)</span>
-      <div class="finding-filters" id="finding-filters">
-        <button class="sev-filter active" data-sev="all">All</button>
-        <button class="sev-filter" data-sev="critical">Critical</button>
-        <button class="sev-filter" data-sev="high">High</button>
-        <button class="sev-filter" data-sev="medium">Medium</button>
-        <button class="sev-filter" data-sev="low">Low</button>
+      <div class="stats-grid" id="platform-stats-content">
+        <div class="stat-card">
+          <div class="stat-value" id="stat-total">—</div>
+          <div class="stat-label">TOTAL SCANS</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-last24">—</div>
+          <div class="stat-label">LAST 24 HOURS</div>
+        </div>
+        <div class="stat-card stat-card-safe">
+          <div class="stat-value" id="stat-safe">—</div>
+          <div class="stat-label">SAFE (CLEAN–MEDIUM)</div>
+        </div>
+        <div class="stat-card stat-card-danger">
+          <div class="stat-value" id="stat-dangerous">—</div>
+          <div class="stat-label">DANGEROUS (HIGH–CRITICAL)</div>
+        </div>
       </div>
-    </div>
-    <div id="detail-findings"><div class="skeleton-line"></div></div>
-  </div>
 
-  <div class="detail-card">
-    <button class="btn-ghost btn-sm collapsible" data-target="detail-raw-content">Raw JSON ▾</button>
-    <pre id="detail-raw-content" class="raw-result collapsible-content" style="display:none"></pre>
-  </div>
-</section>
+      <div class="detail-card" id="risk-distribution" style="display:none">
+        <div class="detail-card-label">RISK DISTRIBUTION</div>
+        <div class="risk-bars" id="risk-bars"></div>
+      </div>
+    </section>
 
-<!-- ========================================================================= -->
-<!-- Platform Stats panel                                                       -->
-<!-- ========================================================================= -->
-<section id="panel-platform-stats" class="panel">
-  <div class="panel-header">
-    <h2>Platform Statistics</h2>
-    <div class="panel-controls">
-      <button id="platform-stats-btn" class="btn-outline btn-sm">Refresh</button>
-      <span id="platform-stats-status" class="status-inline"></span>
-    </div>
-  </div>
+  </main>
 
-  <div class="stats-grid" id="platform-stats-content">
-    <div class="stat-card">
-      <div class="stat-value" id="stat-total">—</div>
-      <div class="stat-label">TOTAL SCANS</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-value" id="stat-last24">—</div>
-      <div class="stat-label">LAST 24 HOURS</div>
-    </div>
-    <div class="stat-card stat-card-safe">
-      <div class="stat-value" id="stat-safe">—</div>
-      <div class="stat-label">SAFE (CLEAN–MEDIUM)</div>
-    </div>
-    <div class="stat-card stat-card-danger">
-      <div class="stat-value" id="stat-dangerous">—</div>
-      <div class="stat-label">DANGEROUS (HIGH–CRITICAL)</div>
-    </div>
-  </div>
-
-  <div class="detail-card" id="risk-distribution" style="display:none">
-    <div class="detail-card-label">RISK DISTRIBUTION</div>
-    <div class="risk-bars" id="risk-bars"></div>
-  </div>
-</section>
-
-</main>
-
-<script src="/js/helpers.js"></script>
-<script src="/js/turnstile.js"></script>
-<script src="/js/router.js"></script>
-<script src="/js/upload.js"></script>
-<script src="/js/history.js"></script>
-<script src="/js/detail.js"></script>
-<script src="/js/stats.js"></script>
-<script src="/js/search.js"></script>
+  <script src="/js/helpers.js"></script>
+  <script src="/js/turnstile.js"></script>
+  <script src="/js/router.js"></script>
+  <script src="/js/upload.js"></script>
+  <script src="/js/history.js"></script>
+  <script src="/js/detail.js"></script>
+  <script src="/js/stats.js"></script>
+  <script src="/js/search.js"></script>
 </body>
+
 </html>

@@ -46,7 +46,7 @@ executing the content.
 | Drag-and-drop (folder) | `vrcstorage-scanner <FOLDER>` | Recursive scan of a directory |
 | HTTP server | `vrcstorage-scanner serve --port 8080` | Cloudflare Containers (R2 download) |
 
-**Server endpoints:** `POST /api/upload`, `POST /api/upload/start`, `PUT /api/upload/part`, `POST /api/upload/end`, `GET /api/download/:hash`, `POST /api/scan`, `POST /api/sanitize`, `POST /api/scan-batch`, `GET /api/health`, `GET /api/cache-stats`, `GET /api/history`, `GET /api/history/:sha256`, `GET /api/search?q=`, `GET /api/stats`.
+**Server endpoints:** `POST /api/upload`, `POST /api/upload/start`, `PUT /api/upload/part`, `POST /api/upload/end`, `GET /api/download/:hash`, `POST /api/scan`, `POST /api/sanitize`, `POST /api/scan-batch`, `GET /api/health`, `GET /api/cache-stats`, `GET /api/history`, `GET /api/history/:sha256`, `GET /api/search?q=`, `GET /api/stats`, `GET /file/:sha256`.
 Worker applies a **two-level cache** on `/api/scan`: KV (24 h, edge-local) checked first, then D1
 (30-day TTL) on KV miss; results are written to both on every new scan. Detail, stats, and
 cache-stats endpoints also use KV (24 h / 60 s / 30 s respectively).
@@ -75,6 +75,11 @@ Batch scan accepts an array of files and returns aggregate results.
   search. Exact 64-char hex hashes navigate directly to the detail page.
 - **Detail page:** VirusTotal-style file detail view showing full findings with severity
   filters, collapsible raw JSON, file tree rendering, risk score, and severity breakdown.
+- **Rich link embeds:** `GET /file/:sha256` returns an SSR HTML page with Open Graph and
+  Twitter Card `<meta>` tags injected before `</head>`. Discord, Twitter/X, and forums render
+  a rich preview (title, description, sidebar colour, og:image). Real browsers receive the same
+  document — the SPA JS hydrates and routes to the detail panel via
+  `routePath('/file/:sha256')`. Logic lives in `worker/src/embed.ts` (`buildEmbedHtml`).
 
 ---
 
@@ -213,9 +218,10 @@ vrcstorage-scanner/
     │   ├── 0001_create_scan_cache.sql  ← scan_cache table + indexes
     │   └── 0002_create_scans.sql       ← scans table for persistent history
     └── src/
-        ├── index.ts            ← Hono app: routes under /api/*, container proxy, cache intercept
+        ├── index.ts            ← Hono app: routes under /api/*, /file/:sha256, container proxy, cache intercept
         ├── cache.ts            ← D1 query helpers: getCachedScan, putCachedScan, getCacheStats
         ├── history.ts          ← D1 query helpers: getScanHistory, getScanByHash, searchScans, putScanResult, getStats
+        ├── embed.ts            ← buildEmbedHtml(): SSR Open Graph / Twitter Card HTML for /file/:sha256 share links
         └── upload.ts           ← R2 upload handler + download serve + cleanup
 ```
 

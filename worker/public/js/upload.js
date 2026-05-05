@@ -298,6 +298,9 @@ async function uploadAndScan() {
 		// Navigate to the detail page so the user sees the full VirusTotal-style view.
 		// The detail panel fetches from /api/history/:sha256 (KV-cached).
 		var resultSha = (parsed && (parsed.sha256 || (parsed.scan_result && parsed.scan_result.file && parsed.scan_result.file.sha256))) || endJson.sha256;
+		// ── Clear the navigation guard BEFORE navigate() so the router's
+		//    uploadInProgress check never sees it as true on a successful scan.
+		window.uploadInProgress = false;
 		if (scanRes.ok && resultSha) {
 			navigate('/detail/' + resultSha);
 		} else {
@@ -314,7 +317,7 @@ async function uploadAndScan() {
 		abortUpload('Scan error: ' + e.message);
 		return;
 	} finally {
-		window.uploadInProgress = false; // always lift the navigation guard
+		window.uploadInProgress = false; // safety net for all other paths (errors, etc.)
 		hideProgress();
 	}
 }
