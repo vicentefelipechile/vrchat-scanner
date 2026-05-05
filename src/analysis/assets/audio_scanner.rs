@@ -441,8 +441,8 @@ fn check_fmt_chunk(payload: &[u8], location: &str, findings: &mut Vec<Finding>) 
     let format_extensible: u16 = 0xFFFE;
     let is_extensible = audio_format == format_extensible;
 
-    let channels_ok = channels >= 1 && channels <= 32;
-    let rate_ok = sample_rate >= 8_000 && sample_rate <= 384_000;
+    let channels_ok = (1..=32).contains(&channels);
+    let rate_ok = (8_000..=384_000).contains(&sample_rate);
     let bits_ok = is_extensible
         || matches!(bits_per_sample, 8 | 16 | 24 | 32 | 64)
         || bits_per_sample == 0;
