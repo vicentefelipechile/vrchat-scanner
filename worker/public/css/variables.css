@@ -1,0 +1,51 @@
+/* ========================================================================== */
+/* Design tokens & reset                                                      */
+/* ========================================================================== */
+
+:root {
+	--bg: #0b0e14;
+	--sidebar-bg: #11151c;
+	--border: #252a33;
+	--border-light: #1e242e;
+	--text: #d4d8de;
+	--muted: #6e7887;
+	--accent: #4d9fff;
+	--accent-glow: rgba(77, 159, 255, 0.12);
+	--danger: #f0424e;
+	--danger-bg: rgba(240, 66, 78, 0.08);
+	--warning: #e0a630;
+	--success: #38b757;
+	--panel-bg: #0b0e14;
+	--input-bg: #191d26;
+	--btn-bg: #1a1f2b;
+	--btn-hover: #232a36;
+	--btn-active: #2a3140;
+	--card-bg: #11151c;
+	--critical: #f0424e;
+	--high: #f07b3e;
+	--medium: #e0a630;
+	--low: #4d9fff;
+	--clean: #38b757;
+	--radius: 8px;
+	--radius-sm: 5px;
+	--transition: 0.18s ease;
+	--font: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+	--font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+	font-family: var(--font);
+	background: var(--bg);
+	color: var(--text);
+	display: flex;
+	min-height: 100vh;
+	-webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }

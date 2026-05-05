@@ -1,0 +1,60 @@
+/* ========================================================================== */
+/* Stats grid                                                                 */
+/* ========================================================================== */
+
+.stats-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+	gap: 14px;
+	margin-bottom: 28px;
+}
+
+.stat-card {
+	background: var(--card-bg);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 20px;
+	text-align: center;
+	transition: border-color var(--transition);
+}
+
+.stat-card:hover { border-color: var(--accent); }
+.stat-card.safe { border-top: 3px solid var(--success); }
+.stat-card.danger { border-top: 3px solid var(--danger); }
+
+.stat-value {
+	font-size: 32px;
+	font-weight: 800;
+	color: var(--text);
+	letter-spacing: -0.5px;
+	line-height: 1.1;
+}
+
+.stat-label {
+	font-size: 11px;
+	color: var(--muted);
+	margin-top: 6px;
+	text-transform: uppercase;
+	letter-spacing: 0.6px;
+	font-family: var(--font-ui);
+}
+
+.risk-distribution { margin-top: 8px; padding: 20px; background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); }
+
+.risk-bars { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+
+.risk-bar-row { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+
+.risk-bar-label {
+	width: 72px;
+	text-align: right;
+	font-weight: 700;
+	text-transform: uppercase;
+	font-size: 10px;
+	letter-spacing: 0.5px;
+	font-family: var(--font-ui);
+}
+
+.risk-bar-track { flex: 1; height: 22px; background: var(--input-bg); border-radius: 4px; overflow: hidden; position: relative; }
+.risk-bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; min-width: 3px; }
+.risk-bar-count { width: 44px; font-size: 11px; font-weight: 600; color: var(--muted); font-family: var(--font-ui); }

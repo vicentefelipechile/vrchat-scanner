@@ -1,0 +1,149 @@
+/* ========================================================================== */
+/* Main area                                                                  */
+/* ========================================================================== */
+
+main {
+	flex: 1;
+	padding: 28px 32px;
+	overflow-y: auto;
+	max-width: 1100px;
+}
+
+.panel { display: none; animation: fadeIn 0.2s ease; }
+.panel.active { display: block; }
+
+@keyframes fadeIn {
+	from { opacity: 0; transform: translateY(4px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+h2 {
+	font-size: 16px;
+	font-weight: 700;
+	color: var(--text);
+	margin-bottom: 6px;
+}
+
+.panel-desc {
+	font-size: 12px;
+	color: var(--muted);
+	margin-bottom: 20px;
+	padding-bottom: 16px;
+	border-bottom: 1px solid var(--border);
+}
+
+h3 {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text);
+	margin-bottom: 10px;
+}
+
+/* ========================================================================== */
+/* Forms                                                                      */
+/* ========================================================================== */
+
+.field { margin-bottom: 14px; }
+
+.field label {
+	display: block;
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--muted);
+	margin-bottom: 4px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	font-family: var(--font-ui);
+}
+
+.field input,
+.field select,
+.field textarea {
+	width: 100%;
+	max-width: 560px;
+	padding: 9px 12px;
+	font-family: var(--font);
+	font-size: 13px;
+	color: var(--text);
+	background: var(--input-bg);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	outline: none;
+	transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.field textarea { height: 140px; resize: vertical; max-width: 560px; }
+.field input[type="checkbox"] { width: auto; margin-right: 6px; accent-color: var(--accent); }
+
+.field-row {
+	display: flex;
+	gap: 16px;
+	flex-wrap: wrap;
+}
+
+.field-inline { flex: 1; min-width: 160px; max-width: 270px; }
+.field-inline input, .field-inline select { max-width: 100%; }
+
+/* Buttons
+   ========================================================================== */
+
+button {
+	padding: 9px 22px;
+	font-family: var(--font-ui);
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text);
+	background: var(--btn-bg);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+	transition: all var(--transition);
+	margin-bottom: 14px;
+}
+
+button:hover {
+	background: var(--btn-hover);
+	border-color: var(--accent);
+}
+
+button:active { background: var(--btn-active); }
+
+.btn-primary {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: #fff;
+	font-weight: 700;
+}
+
+.btn-primary:hover {
+	background: #3a8ae0;
+	border-color: #3a8ae0;
+}
+
+.btn-secondary {
+	background: transparent;
+	border-color: var(--border);
+	color: var(--muted);
+	opacity: 0.85;
+}
+
+.btn-secondary:hover {
+	opacity: 1;
+	color: var(--text);
+	border-color: var(--accent);
+}
+
+.btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.btn-back {
+	font-size: 12px;
+	padding: 6px 14px;
+	margin-bottom: 10px;
+}

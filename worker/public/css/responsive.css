@@ -1,0 +1,41 @@
+/* ========================================================================== */
+/* Responsive                                                                 */
+/* ========================================================================== */
+
+@media (max-width: 768px) {
+	body { flex-direction: column; }
+
+	.sidebar {
+		width: 100%;
+		border-right: none;
+		border-bottom: 1px solid var(--border);
+		padding: 10px 0;
+		flex-direction: row;
+		overflow-x: auto;
+		flex-wrap: wrap;
+	}
+
+	.sidebar-brand, .sidebar-section, .search-box { display: none; }
+
+	.sidebar a {
+		padding: 6px 10px;
+		font-size: 11px;
+		white-space: nowrap;
+		border-left: none;
+		border-bottom: 2px solid transparent;
+	}
+
+	.sidebar a.active {
+		border-left: none;
+		border-bottom-color: var(--accent);
+	}
+
+	main { padding: 16px; }
+
+	.detail-cols { grid-template-columns: 1fr; }
+	.stats-grid { grid-template-columns: 1fr 1fr; }
+	.history-table { font-size: 10px; }
+	.history-table th, .history-table td { padding: 6px 8px; }
+	.field-row { flex-direction: column; }
+	.field-inline { max-width: 100%; }
+}

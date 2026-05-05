@@ -46,6 +46,123 @@ import { getScanHistory, getScanByHash, searchScans, putScanResult, getStats } f
 import { handleUpload, serveDownload, cleanupUpload } from './upload';
 
 // =========================================================================================================
+// Rate limiting
+// =========================================================================================================
+
+/**
+ * Extracts the client IP address from the request headers.
+ * Cloudflare sets cf-connecting-ip on all incoming requests.
+ */
+function clientIP(c: HonoContext): string {
+	return c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
+}
+
+/**
+ * Checks the rate limit for a given request.
+ * Returns a 429 Response if rate limited, or null if allowed.
+ */
+async function checkRateLimit(
+	limiter: RateLimit,
+	key: string,
+): Promise<Response | null> {
+	const { success } = await limiter.limit({ key });
+	if (!success) {
+		return new Response(
+			JSON.stringify({ error: 'Rate limit exceeded. Please slow down and try again.', code: 429, ok: false }),
+			{ status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '60' } },
+		);
+	}
+	return null;
+}
+
+/**
+ * Validates a Turnstile token against Cloudflare's Siteverify API.
+ * Returns a 400 Response if invalid, or null if the token passes.
+ */
+async function verifyTurnstile(
+	token: string,
+	remoteip: string,
+	secret: string,
+): Promise<Response | null> {
+	try {
+		const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ secret, response: token, remoteip }),
+		});
+		const data: any = await res.json();
+		if (!data.success) {
+			return new Response(
+				JSON.stringify({ error: 'Human verification failed. Please refresh and try again.', code: 400, ok: false }),
+				{ status: 400, headers: { 'Content-Type': 'application/json' } },
+			);
+		}
+		return null;
+	} catch {
+		return new Response(
+			JSON.stringify({ error: 'Verification service unreachable. Please try again.', code: 502, ok: false }),
+			{ status: 502, headers: { 'Content-Type': 'application/json' } },
+		);
+	}
+}
+
+/**
+ * Extracts and validates a Turnstile token from a JSON request body
+ * without consuming the original body (reads from a clone).
+ */
+async function verifyTurnstileFromJSON(
+	request: Request,
+	secret: string,
+	remoteip: string,
+): Promise<Response | null> {
+	try {
+		const cloned = request.clone();
+		const body: any = await cloned.json();
+		const token = body.cf_turnstile_response as string | undefined;
+		if (!token) {
+			return new Response(
+				JSON.stringify({ error: 'Human verification required.', code: 400, ok: false }),
+				{ status: 400, headers: { 'Content-Type': 'application/json' } },
+			);
+		}
+		return verifyTurnstile(token, remoteip, secret);
+	} catch {
+		return new Response(
+			JSON.stringify({ error: 'Failed to parse verification data.', code: 400, ok: false }),
+			{ status: 400, headers: { 'Content-Type': 'application/json' } },
+		);
+	}
+}
+
+/**
+ * Extracts and validates a Turnstile token from a multipart/form-data request
+ * without consuming the body (reads from a clone).
+ */
+async function verifyTurnstileFromFormData(
+	request: Request,
+	secret: string,
+	remoteip: string,
+): Promise<Response | null> {
+	try {
+		const cloned = request.clone();
+		const formData = await cloned.formData();
+		const token = formData.get('cf-turnstile-response') as string | null;
+		if (!token) {
+			return new Response(
+				JSON.stringify({ error: 'Human verification required.', code: 400, ok: false }),
+				{ status: 400, headers: { 'Content-Type': 'application/json' } },
+			);
+		}
+		return verifyTurnstile(token, remoteip, secret);
+	} catch {
+		return new Response(
+			JSON.stringify({ error: 'Failed to parse verification data.', code: 400, ok: false }),
+			{ status: 400, headers: { 'Content-Type': 'application/json' } },
+		);
+	}
+}
+
+// =========================================================================================================
 // Container class
 // =========================================================================================================
 
@@ -121,6 +238,12 @@ const app = new Hono<{ Bindings: Env }>();
 // and returns a download URL + metadata for scanning.
 
 app.post('/api/upload', async (c) => {
+	const rateLimited = await checkRateLimit(c.env.UPLOAD_RATE_LIMITER, 'upload:' + clientIP(c));
+	if (rateLimited) return rateLimited;
+
+	const turnstileError = await verifyTurnstileFromFormData(c.req.raw, c.env.TURNSTILE_SECRET_KEY, clientIP(c));
+	if (turnstileError) return turnstileError;
+
 	const result = await handleUpload(c.req.raw, c.env.UPLOAD_BUCKET);
 
 	if (result.error) {
@@ -151,6 +274,9 @@ app.get('/api/download/:hash', async (c) => {
 // Also stores results in the permanent `scans` table for history.
 
 app.post('/api/scan', async (c) => {
+	const rateLimited = await checkRateLimit(c.env.API_RATE_LIMITER, 'scan:' + clientIP(c));
+	if (rateLimited) return rateLimited;
+
 	const params = extractQueryParams(new URL(c.req.url));
 
 	// Clone the raw request before reading the body so the original
@@ -165,6 +291,15 @@ app.post('/api/scan', async (c) => {
 		expectedSha256 = body.expected_sha256;
 	} catch {
 		return proxyToContainer(c);
+	}
+
+	// Turnstile validation
+	const turnstileToken = body.cf_turnstile_response;
+	if (turnstileToken) {
+		const turnstileError = await verifyTurnstile(turnstileToken, clientIP(c), c.env.TURNSTILE_SECRET_KEY);
+		if (turnstileError) return turnstileError;
+	} else {
+		return c.json({ error: 'Human verification required.', code: 400, ok: false }, 400);
 	}
 
 	// Cache HIT path — return the stored result immediately without
@@ -285,12 +420,30 @@ app.post('/api/scan', async (c) => {
 // ── POST /api/sanitize ──────────────────────────────────────────────────────
 // Proxy to container — no caching for sanitize.
 
-app.post('/api/sanitize', proxyToContainer);
+app.post('/api/sanitize', async (c) => {
+	const rateLimited = await checkRateLimit(c.env.API_RATE_LIMITER, 'sanitize:' + clientIP(c));
+	if (rateLimited) return rateLimited;
+
+	// Turnstile validation from JSON clone without consuming the original body
+	const turnstileCheck = await verifyTurnstileFromJSON(c.req.raw, c.env.TURNSTILE_SECRET_KEY, clientIP(c));
+	if (turnstileCheck) return turnstileCheck;
+
+	return proxyToContainer(c);
+});
 
 // ── POST /api/scan-batch ────────────────────────────────────────────────────
 // Proxy to container — no caching for batch scans.
 
-app.post('/api/scan-batch', proxyToContainer);
+app.post('/api/scan-batch', async (c) => {
+	const rateLimited = await checkRateLimit(c.env.API_RATE_LIMITER, 'batch:' + clientIP(c));
+	if (rateLimited) return rateLimited;
+
+	// Turnstile validation from JSON clone without consuming the original body
+	const turnstileCheck = await verifyTurnstileFromJSON(c.req.raw, c.env.TURNSTILE_SECRET_KEY, clientIP(c));
+	if (turnstileCheck) return turnstileCheck;
+
+	return proxyToContainer(c);
+});
 
 // ── GET /api/health ─────────────────────────────────────────────────────────
 // Proxy to container.

@@ -1,53 +1,72 @@
 {
-	"name": "vrcstorage-scanner",
-	"main": "./worker/src/index.ts",
-	"compatibility_date": "2026-04-29",
-	"assets": {
-		"directory": "./worker/public",
-		"html_handling": "auto-trailing-slash",
-		"not_found_handling": "single-page-application"
-	},
-	"containers": [
-		{
-			"name": "vrcstorage-scanner-scannercontainer",
-			"scheduling_policy": "default",
-			"class_name": "ScannerContainer",
-			"image": "./Dockerfile",
-			"max_instances": 5,
-			"instance_type": "standard-1",
-		}
-	],
-	"d1_databases": [
-		{
-			"binding": "SCAN_CACHE_DB",
-			"database_name": "vrcstorage-scanner",
-			"database_id": "00f09f5a-a88f-4490-a5f7-ace742d59210",
-			"migrations_dir": "./worker/migrations"
-		}
-	],
-	"r2_buckets": [
-		{
-			"binding": "UPLOAD_BUCKET",
-			"bucket_name": "vrcstorage-uploads"
-		}
-	],
-	"durable_objects": {
-		"bindings": [
-			{
-				"class_name": "ScannerContainer",
-				"name": "SCANNER"
-			}
-		]
-	},
-	"migrations": [
-		{
-			"new_sqlite_classes": [
-				"ScannerContainer"
-			],
-			"tag": "v1"
-		}
-	],
-	"observability": {
-		"enabled": true
-	}
+  "name": "vrcstorage-scanner",
+  "main": "./worker/src/index.ts",
+  "compatibility_date": "2026-04-29",
+  "assets": {
+    "directory": "./worker/public",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "single-page-application",
+  },
+  "vars": {
+    "TURNSTILE_SITEKEY": "0x4AAAAAADGqpmoCAv2qEqDD",
+  },
+  "containers": [
+    {
+      "name": "vrcstorage-scanner-scannercontainer",
+      "scheduling_policy": "default",
+      "class_name": "ScannerContainer",
+      "image": "registry.cloudflare.com/3927234333597c7a6b80c66b997b6257/vrcstorage-scanner-scannercontainer:6adfb356",
+      "max_instances": 5,
+      "instance_type": "standard-1",
+    },
+  ],
+  "d1_databases": [
+    {
+      "binding": "SCAN_CACHE_DB",
+      "database_name": "vrcstorage-scanner",
+      "database_id": "00f09f5a-a88f-4490-a5f7-ace742d59210",
+      "migrations_dir": "./worker/migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "UPLOAD_BUCKET",
+      "bucket_name": "vrcstorage-uploads",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "ScannerContainer",
+        "name": "SCANNER",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "new_sqlite_classes": ["ScannerContainer"],
+      "tag": "v1",
+    },
+  ],
+  "ratelimits": [
+    {
+      "name": "UPLOAD_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 5,
+        "period": 60,
+      },
+    },
+    {
+      "name": "API_RATE_LIMITER",
+      "namespace_id": "1002",
+      "simple": {
+        "limit": 30,
+        "period": 60,
+      },
+    },
+  ],
+  "observability": {
+    "enabled": true,
+  },
 }
