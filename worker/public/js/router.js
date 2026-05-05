@@ -2,17 +2,17 @@
 // router.js — History API routing and panel switching
 // =============================================================================
 
-var PANEL_PATHS = {
-	'upload': '/upload',
-	'history': '/history',
+const PANEL_PATHS = {
+	'upload':         '/upload',
+	'history':        '/history',
 	'platform-stats': '/stats',
 };
 
-var PATH_TO_PANEL = {};
-for (var _p in PANEL_PATHS) PATH_TO_PANEL[PANEL_PATHS[_p]] = _p;
+const PATH_TO_PANEL = {};
+for (const _p in PANEL_PATHS) PATH_TO_PANEL[PANEL_PATHS[_p]] = _p;
 PATH_TO_PANEL['/'] = 'upload';
 
-var currentPanel = 'upload';
+let currentPanel = 'upload';
 
 function showPanel(name) {
 	currentPanel = name;
@@ -21,7 +21,7 @@ function showPanel(name) {
 		if (a.getAttribute('data-panel') === name) a.classList.add('active');
 	});
 	document.querySelectorAll('.panel').forEach(function (p) { p.classList.remove('active'); });
-	var t = $('panel-' + name);
+	const t = $('panel-' + name);
 	if (t) t.classList.add('active');
 }
 
@@ -36,14 +36,14 @@ function navigate(path) {
 }
 
 function routePath(path) {
-	var detailMatch = path.match(/^\/(?:detail|file)\/([0-9a-fA-F]{64})$/);
+	const detailMatch = path.match(/^\/(?:detail|file)\/([0-9a-fA-F]{64})$/);
 	if (detailMatch) {
-		var sha256 = detailMatch[1];
+		const sha256 = detailMatch[1];
 		showPanel('detail');
 		if (currentDetailHash !== sha256) showDetail(sha256);
 		return;
 	}
-	var panel = PATH_TO_PANEL[path];
+	let panel = PATH_TO_PANEL[path];
 	if (!panel) panel = 'upload';
 	showPanel(panel);
 	if (panel === 'history') loadHistory();
@@ -72,7 +72,7 @@ window.addEventListener('beforeunload', function (e) {
 // other scripts (detail.js, history.js, etc.) are already executed and
 // their globals (currentDetailHash, showDetail, loadHistory…) are defined.
 window.addEventListener('DOMContentLoaded', function () {
-	var path = window.location.pathname;
+	const path = window.location.pathname;
 	if (path !== '/') {
 		if (PATH_TO_PANEL[path] || /^\/(?:detail|file)\//.test(path)) {
 			routePath(path);
@@ -85,8 +85,8 @@ window.addEventListener('DOMContentLoaded', function () {
 // Sidebar links use History API
 document.querySelectorAll('.sidebar a').forEach(function (link) {
 	link.addEventListener('click', function () {
-		var panel = this.getAttribute('data-panel');
-		var path = PANEL_PATHS[panel] || '/' + panel;
+		const panel = this.getAttribute('data-panel');
+		const path  = PANEL_PATHS[panel] || '/' + panel;
 		navigate(path);
 	});
 });
@@ -96,12 +96,12 @@ document.querySelectorAll('.sidebar a').forEach(function (link) {
 // =============================================================================
 
 document.addEventListener('click', function (e) {
-	var el = e.target.closest('.collapsible');
+	const el = e.target.closest('.collapsible');
 	if (!el) return;
-	var targetId = el.getAttribute('data-target');
-	var target = document.getElementById(targetId);
+	const targetId = el.getAttribute('data-target');
+	const target   = document.getElementById(targetId);
 	if (!target) return;
-	var isOpen = target.style.display !== 'none';
+	const isOpen = target.style.display !== 'none';
 	target.style.display = isOpen ? 'none' : 'block';
 	el.classList.toggle('open', !isOpen);
 });

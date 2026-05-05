@@ -2,8 +2,8 @@
 // detail.js — Scan detail panel (VirusTotal-style)
 // =============================================================================
 
-var allFindings = [];
-var currentDetailHash = null;
+let allFindings = [];
+let currentDetailHash = null;
 
 async function showDetail(sha256) {
 	currentDetailHash = sha256;
@@ -16,27 +16,29 @@ async function showDetail(sha256) {
 	$('detail-file-tree').innerHTML = '<div class="skeleton-line"></div>';
 	$('detail-raw-content').textContent = '';
 
+	const detailUrl = '/api/history/' + sha256;
+
 	// Retry loop — the scan result may not yet be committed to D1/KV
 	// immediately after navigation (race condition). Retry up to MAX_RETRIES
 	// times with exponential backoff before giving up.
-	var MAX_RETRIES = 5;
-	var RETRY_DELAY = 600; // ms, doubles each attempt
+	const MAX_RETRIES = 5;
+	const RETRY_DELAY = 600; // ms, doubles each attempt
 
-	for (var attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+	for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
 		try {
-			var res = await fetch('/api/history/' + sha256);
-			var json = {};
-			try { json = await res.json(); } catch(e) {}
+			// 5-minute persistent cache — detail pages are immutable once written.
+			// Bust the cache on every retry so we don't serve a stale 404.
+			if (attempt > 0) DataCache.clear(detailUrl);
+			const json = await DataCache.fetch(detailUrl, { ttl: 5 * 60_000, persistent: true, type: 'json' });
 
-			if (res.ok && json.ok) {
+			if (json.ok) {
 				renderDetail(json);
 				return;
 			}
 
-			// Not found yet — wait and retry if attempts remain
+			// Not found yet — wait and retry if attempts remain.
 			if (attempt < MAX_RETRIES) {
-				var waitMs = RETRY_DELAY * Math.pow(2, attempt);
-				var remaining = MAX_RETRIES - attempt;
+				const waitMs = RETRY_DELAY * Math.pow(2, attempt);
 				$('detail-meta').innerHTML =
 					'<div class="skeleton-line"></div>' +
 					'<p style="color:var(--text-dim);font-family:var(--font-mono);font-size:11px;margin-top:8px">' +
@@ -47,6 +49,8 @@ async function showDetail(sha256) {
 				$('detail-meta').innerHTML = '<p style="color:var(--danger)">Scan not found or failed to load.</p>';
 			}
 		} catch (e) {
+			// On network error, bust the cache so the retry always goes to the network.
+			DataCache.clear(detailUrl);
 			if (attempt >= MAX_RETRIES) {
 				$('detail-meta').innerHTML = '<p style="color:var(--danger)">Error: ' + e.message + '</p>';
 			} else {
@@ -70,16 +74,16 @@ function renderDetail(d) {
 		'<div class="meta-row"><span class="meta-label">Views</span><span class="meta-value">' + d.access_count + '</span></div>';
 
 	// Score
-	var level = d.risk_level;
-	var scoreColor = RISK_COLORS[level] || 'var(--text)';
+	const level = d.risk_level;
+	const scoreColor = RISK_COLORS[level] || 'var(--text)';
 	$('detail-score').innerHTML = '<div class="score-big" style="color:' + scoreColor + '">' + d.total_score + '</div>' + riskBadge(level).outerHTML;
 
 	// Severity
-	var sevs = [
+	const sevs = [
 		{ l: 'Critical', c: d.critical_count || 0, k: 'badge-critical' },
-		{ l: 'High', c: d.high_count || 0, k: 'badge-high' },
-		{ l: 'Medium', c: d.medium_count || 0, k: 'badge-medium' },
-		{ l: 'Low', c: d.low_count || 0, k: 'badge-low' },
+		{ l: 'High',     c: d.high_count     || 0, k: 'badge-high'     },
+		{ l: 'Medium',   c: d.medium_count   || 0, k: 'badge-medium'   },
+		{ l: 'Low',      c: d.low_count      || 0, k: 'badge-low'      },
 	];
 	$('detail-severity').innerHTML = sevs.map(function (s) {
 		return '<div class="sev-count"><span class="count">' + s.c + '</span><span class="badge ' + s.k + '">' + s.l + '</span></div>';
@@ -97,10 +101,10 @@ function renderDetail(d) {
 	// File tree — hierarchical collapsible
 	if (d.file_tree && d.file_tree.length > 0) {
 		// 1. Build a nested object tree
-		var root = {};
+		const root = {};
 		d.file_tree.forEach(function (e) {
-			var parts = e.path.replace(/\\/g, '/').split('/');
-			var node = root;
+			const parts = e.path.replace(/\\/g, '/').split('/');
+			let node = root;
 			parts.forEach(function (part, idx) {
 				if (!node[part]) {
 					node[part] = { __files: [], __children: {} };
@@ -114,17 +118,17 @@ function renderDetail(d) {
 
 		// 2. Recursively render the node tree as HTML
 		function renderNode(node, name, depth) {
-			var entry = node;
-			var isLeaf = !!entry.__leaf;
-			var children = entry.__children;
-			var hasChildren = Object.keys(children).length > 0;
+			const entry = node;
+			const isLeaf = !!entry.__leaf;
+			const children = entry.__children;
+			const hasChildren = Object.keys(children).length > 0;
 
 			if (isLeaf && !hasChildren) {
 				// Plain file
-				var leaf = entry.__leaf;
-				var icon = leaf.asset_type === 'Meta' ? 'M' : leaf.asset_type === 'Script' ? 'S' : 'F';
-				var cls = leaf.asset_type === 'Meta' ? 'ft-meta' : 'ft-file';
-				var sz = leaf.size_bytes > 0 ? '<span class="ft-size">' + formatBytes(leaf.size_bytes) + '</span>' : '';
+				const leaf = entry.__leaf;
+				const icon = leaf.asset_type === 'Meta' ? 'M' : leaf.asset_type === 'Script' ? 'S' : 'F';
+				const cls  = leaf.asset_type === 'Meta' ? 'ft-meta' : 'ft-file';
+				const sz   = leaf.size_bytes > 0 ? '<span class="ft-size">' + formatBytes(leaf.size_bytes) + '</span>' : '';
 				return '<div class="ft-row ' + cls + '" style="--depth:' + depth + '">' +
 					'<span class="ft-icon">' + icon + '</span>' +
 					'<span class="ft-name">' + escapeHtml(name) + '</span>' +
@@ -132,15 +136,15 @@ function renderDetail(d) {
 					'</div>';
 			} else {
 				// Folder (possibly also a leaf with children — treat as dir)
-				var open = depth < 2 ? ' open' : '';
-				var keys = Object.keys(children).sort(function (a, b) {
+				const open = depth < 2 ? ' open' : '';
+				const keys = Object.keys(children).sort(function (a, b) {
 					// dirs (have children) before files (leaves)
-					var aDir = Object.keys(children[a].__children).length > 0;
-					var bDir = Object.keys(children[b].__children).length > 0;
+					const aDir = Object.keys(children[a].__children).length > 0;
+					const bDir = Object.keys(children[b].__children).length > 0;
 					if (aDir !== bDir) return aDir ? -1 : 1;
 					return a.localeCompare(b);
 				});
-				var inner = keys.map(function (k) {
+				const inner = keys.map(function (k) {
 					return renderNode(children[k], k, depth + 1);
 				}).join('');
 				return '<details class="ft-dir-node"' + open + ' style="--depth:' + depth + '">' +
@@ -153,13 +157,13 @@ function renderDetail(d) {
 			}
 		}
 
-		var rootKeys = Object.keys(root).sort(function (a, b) {
-			var aDir = Object.keys(root[a].__children).length > 0;
-			var bDir = Object.keys(root[b].__children).length > 0;
+		const rootKeys = Object.keys(root).sort(function (a, b) {
+			const aDir = Object.keys(root[a].__children).length > 0;
+			const bDir = Object.keys(root[b].__children).length > 0;
 			if (aDir !== bDir) return aDir ? -1 : 1;
 			return a.localeCompare(b);
 		});
-		var treeHTML = '<div class="file-tree">';
+		let treeHTML = '<div class="file-tree">';
 		rootKeys.forEach(function (k) {
 			treeHTML += renderNode(root[k], k, 0);
 		});
@@ -176,16 +180,16 @@ function renderDetail(d) {
 }
 
 function renderFindings(filter) {
-	var findingsHTML = '';
-	allFindings.forEach(function (f, i) {
-		var sev = (f.severity || 'low').toLowerCase();
-		var hidden = (filter !== 'all' && filter !== sev) ? ' hidden' : '';
-		var sevClass = sev;
+	let findingsHTML = '';
+	allFindings.forEach(function (f) {
+		const sev     = (f.severity || 'low').toLowerCase();
+		const hidden   = (filter !== 'all' && filter !== sev) ? ' hidden' : '';
+		const sevClass = sev;
 
-		var linesText = '';
+		let linesText = '';
 		if (f.line_numbers && f.line_numbers.length > 0) {
-			var first = f.line_numbers.slice(0, 8).join(', ');
-			var more = f.line_numbers.length > 8 ? ' &hellip;(+' + (f.line_numbers.length - 8) + ')' : '';
+			const first = f.line_numbers.slice(0, 8).join(', ');
+			const more  = f.line_numbers.length > 8 ? ' &hellip;(+' + (f.line_numbers.length - 8) + ')' : '';
 			linesText = '<span>Lines: ' + first + more + '</span>';
 		} else {
 			linesText = '<span class="finding-lines-none">No line numbers</span>';
@@ -213,8 +217,8 @@ document.querySelectorAll('.sev-filter').forEach(function (btn) {
 	btn.addEventListener('click', function () {
 		document.querySelectorAll('.sev-filter').forEach(function (b) { b.classList.remove('active'); });
 		this.classList.add('active');
-		var filter = this.getAttribute('data-sev');
-		var cards = $('detail-findings').querySelectorAll('.finding-card');
+		const filter = this.getAttribute('data-sev');
+		const cards  = $('detail-findings').querySelectorAll('.finding-card');
 		cards.forEach(function (c) {
 			if (filter === 'all' || c.getAttribute('data-finding-sev') === filter) c.classList.remove('hidden');
 			else c.classList.add('hidden');
@@ -225,12 +229,12 @@ document.querySelectorAll('.sev-filter').forEach(function (btn) {
 // Hash copy
 function copyHash(hash, btn) {
 	navigator.clipboard.writeText(hash).then(function () {
-		btn.textContent = '\u2713';
+		btn.textContent = '✓';
 		btn.classList.add('copied');
-		setTimeout(function () { btn.textContent = '\xa9'; btn.classList.remove('copied'); }, 2000);
+		setTimeout(function () { btn.textContent = '©'; btn.classList.remove('copied'); }, 2000);
 	}).catch(function () {
 		btn.textContent = '!';
-		setTimeout(function () { btn.textContent = '\xa9'; }, 1500);
+		setTimeout(function () { btn.textContent = '©'; }, 1500);
 	});
 }
 

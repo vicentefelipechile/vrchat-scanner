@@ -3,10 +3,10 @@
 // =============================================================================
 
 /** Public sitekey from Cloudflare Turnstile (public by design) */
-var TURNSTILE_SITEKEY = '0x4AAAAAADGqpmoCAv2qEqDD';
+const TURNSTILE_SITEKEY = '0x4AAAAAADGqpmoCAv2qEqDD';
 
 /** Renders the Turnstile widget once the API script loads */
-var turnstileWidgetId = null;
+let turnstileWidgetId = null;
 
 /**
  * Called by Turnstile's onload callback (set in <script src>).
@@ -20,7 +20,7 @@ function onTurnstileLoad() {
 		execution: 'execute',
 		callback: function (token) { window.turnstileToken = token; },
 		'expired-callback': function () { window.turnstileToken = null; },
-		'error-callback': function () { window.turnstileToken = null; },
+		'error-callback':   function () { window.turnstileToken = null; },
 	});
 }
 
