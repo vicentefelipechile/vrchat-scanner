@@ -49,8 +49,8 @@
   </a>
 
   <div class="sidebar-footer">
-    <span>vrcstorage-scanner</span>
-    <span>Static Analysis Engine</span>
+    <span>Made by <strong>SummerTYT</strong> with help from <strong>anonberry</strong></span>
+    <a href="https://vrcstorage.lat/" target="_blank" rel="noopener" class="sidebar-footer-link">vrcstorage.lat ↗</a>
   </div>
 </nav>
 
@@ -65,16 +65,16 @@
 <section id="panel-upload" class="panel active">
   <div class="panel-header">
     <h2>Upload &amp; Scan</h2>
-    <span class="panel-header-sub">Supported: .unitypackage · .zip · .cs · .dll — Max 500 MB</span>
+    <span class="panel-header-sub">Supported: .unitypackage — Max 500 MB</span>
   </div>
 
   <div id="upload-dropzone" class="dropzone">
     <div class="dropzone-inner">
       <div class="dropzone-icon">↑</div>
       <p class="dropzone-title">Drag &amp; drop a file here</p>
-      <p class="dropzone-hint">.unitypackage / .zip / .cs / .dll</p>
+      <p class="dropzone-hint">Only .unitypackage</p>
     </div>
-    <input type="file" id="upload-file-input" accept=".unitypackage,.zip,.cs,.dll,.exe,.prefab,.asset,.unity,.meta">
+    <input type="file" id="upload-file-input" accept=".unitypackage">
   </div>
 
   <div id="upload-progress" class="progress-wrap" style="display:none">
@@ -104,7 +104,7 @@
 
     <div class="btn-group">
       <button id="upload-scan-btn" class="btn-primary">Scan Now</button>
-      <button id="upload-sanitize-btn" class="btn-outline" disabled title="Coming soon">Scan &amp; Sanitize</button>
+      <button id="upload-sanitize-btn" class="btn-coming-soon" disabled title="Not available yet">Scan &amp; Sanitize</button>
       <button id="upload-reset-btn" class="btn-ghost">Reset</button>
     </div>
   </div>
@@ -270,6 +270,5 @@
 <script src="/js/detail.js"></script>
 <script src="/js/stats.js"></script>
 <script src="/js/search.js"></script>
-<script src="/js/misc.js"></script>
 </body>
 </html>

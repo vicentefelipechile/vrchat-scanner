@@ -4,6 +4,14 @@
 
 function $(id) { return document.getElementById(id); }
 
+function escapeHtml(str) {
+	return String(str)
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;');
+}
+
 function setStatus(el, ok, text) {
 	el.textContent = text || (ok ? '200 OK' : 'ERROR');
 	el.className = 'status ' + (ok ? 'ok' : 'err');

@@ -152,6 +152,23 @@ button:active {
 	align-items: center;
 }
 
+/* Coming soon — clearly unavailable */
+.btn-coming-soon {
+	background: transparent;
+	border: 1px dashed var(--border);
+	color: var(--text-dim);
+	opacity: 0.45;
+	cursor: not-allowed;
+	text-decoration: line-through;
+	text-decoration-color: var(--border-hi);
+	pointer-events: none;
+}
+.btn-coming-soon:hover {
+	background: transparent;
+	border-color: var(--border);
+	color: var(--text-dim);
+}
+
 /* ========================================================================== */
 /* Status inline                                                               */
 /* ========================================================================== */

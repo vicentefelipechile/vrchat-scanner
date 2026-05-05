@@ -125,23 +125,61 @@
 	color: var(--text);
 }
 
-/* File Tree */
+/* File Tree — hierarchical collapsible */
 .file-tree {
 	background: var(--surface);
 	border: 1px solid var(--border);
-	padding: 12px;
+	padding: 8px 0;
 	font-family: var(--font-mono);
 	font-size: 11px;
-	line-height: 1.8;
-	max-height: 300px;
+	line-height: 1.7;
+	max-height: 320px;
 	overflow-y: auto;
-	white-space: pre;
+	overflow-x: hidden;   /* no horizontal page-shift */
 }
 
-.ft-dir  { color: var(--text); }
-.ft-file { color: var(--text-muted); }
-.ft-meta { color: var(--text-dim); }
-.ft-size { color: var(--text-dim); font-size: 9px; margin-left: 8px; }
+/* Every row (file or folder summary) shares the same layout */
+.ft-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 1px 12px 1px calc(12px + var(--depth, 0) * 14px);
+	min-width: 0;          /* allow flex children to shrink */
+	cursor: default;
+}
+.ft-row:hover { background: var(--surface-2); }
+
+/* Folder <details> reset */
+.ft-dir-node {
+	display: block;
+}
+.ft-dir-node > summary { list-style: none; cursor: pointer; }
+.ft-dir-node > summary::-webkit-details-marker { display: none; }
+
+/* Rotate arrow when open */
+.ft-dir-node[open] > summary .ft-icon { display: inline-block; transform: rotate(90deg); }
+
+.ft-icon {
+	flex-shrink: 0;
+	width: 12px;
+	text-align: center;
+	color: #888888;
+	font-size: 9px;
+	transition: transform 0.15s ease;
+}
+
+.ft-name {
+	flex: 1;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.ft-dir  { color: var(--text); font-weight: 600; }
+.ft-file { color: #b0b0b0; }
+.ft-meta { color: #888888; }
+.ft-size { flex-shrink: 0; color: #888888; font-size: 9px; margin-left: 4px; }
 
 /* Findings Filters */
 .finding-filters {

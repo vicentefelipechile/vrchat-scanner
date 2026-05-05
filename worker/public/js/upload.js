@@ -170,40 +170,52 @@ async function uploadAndScan() {
 	var uploadId = startJson.upload_id;
 	var r2Key    = startJson.r2_key;
 
-	// ── Step 3: Upload parts ─────────────────────────────────────────────────
-	var totalChunks = Math.max(1, Math.ceil(uploadFile.size / CHUNK_SIZE));
-	var parts = [];
+	// ── Step 3: Upload parts (2 parallel lanes) ─────────────────────────────
+	var totalChunks    = Math.max(1, Math.ceil(uploadFile.size / CHUNK_SIZE));
+	var parts          = new Array(totalChunks); // pre-allocated by index
+	var completedChunks = 0;
+	var CONCURRENCY    = 2; // number of simultaneous part uploads
 
-	for (var i = 0; i < totalChunks; i++) {
-		var chunkStart = i * CHUNK_SIZE;
+	/** Upload a single part by index; updates progress when done. */
+	async function uploadPart(idx) {
+		var chunkStart = idx * CHUNK_SIZE;
 		var chunkEnd   = Math.min(chunkStart + CHUNK_SIZE, uploadFile.size);
 		var chunk      = uploadFile.slice(chunkStart, chunkEnd);
 
-		// Progress: 5 % → 80 % spread across all parts
-		var pct = Math.round(5 + ((i / totalChunks) * 75));
+		var partRes = await fetch('/api/upload/part', {
+			method:  'PUT',
+			headers: {
+				'Content-Type':  'application/octet-stream',
+				'X-Upload-Id':   uploadId,
+				'X-R2-Key':      r2Key,
+				'X-Part-Number': String(idx + 1),
+			},
+			body: chunk,
+		});
+		var partJson = await partRes.json();
+		if (!partJson.ok) throw new Error(partJson.error || 'Part upload failed');
+
+		// Update progress as each part completes (thread-safe: JS is single-threaded)
+		completedChunks++;
+		var pct = Math.round(5 + (completedChunks / totalChunks) * 75);
 		setProgress(pct, totalChunks === 1
 			? 'Uploading...'
-			: 'Uploading part ' + (i + 1) + ' of ' + totalChunks + '...'
+			: 'Uploading... ' + completedChunks + ' / ' + totalChunks + ' parts done'
 		);
 
-		var partJson;
-		try {
-			var partRes = await fetch('/api/upload/part', {
-				method:  'PUT',
-				headers: {
-					'Content-Type':  'application/octet-stream',
-					'X-Upload-Id':   uploadId,
-					'X-R2-Key':      r2Key,
-					'X-Part-Number': String(i + 1),
-				},
-				body: chunk,
-			});
-			partJson = await partRes.json();
-			if (!partJson.ok) { abortUpload(partJson.error || 'Part upload failed'); return; }
-		} catch (e) { abortUpload('Network error: ' + e.message); return; }
-
-		parts.push({ etag: partJson.etag, part_number: partJson.part_number });
+		parts[idx] = { etag: partJson.etag, part_number: partJson.part_number };
 	}
+
+	// Process chunks in batches of CONCURRENCY
+	try {
+		for (var i = 0; i < totalChunks; i += CONCURRENCY) {
+			var batch = [];
+			for (var j = i; j < Math.min(i + CONCURRENCY, totalChunks); j++) {
+				batch.push(uploadPart(j));
+			}
+			await Promise.all(batch); // both lanes run simultaneously; fail-fast on error
+		}
+	} catch (e) { abortUpload('Network error: ' + e.message); return; }
 
 	// ── Step 4: Complete upload ───────────────────────────────────────────────
 	setProgress(83, 'Finalizing upload...');
