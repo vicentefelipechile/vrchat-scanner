@@ -12,7 +12,7 @@ async function doSearch() {
 	try {
 		// Cache search results for 30 s — same query typed again within the session is instant.
 		const url  = '/api/search?q=' + encodeURIComponent(q);
-		const json = await DataCache.fetch(url, { ttl: 30_000, type: 'json' });
+		const json = await DataCache.fetch(url, { ttl: TimeUnit.Second * 30, type: 'json' });
 		if (json.results && json.results.length > 0) {
 			showPanel('history');
 			$('history-pagination').style.display = 'none';

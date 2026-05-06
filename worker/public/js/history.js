@@ -34,7 +34,7 @@ async function loadHistory() {
 		const url  = '/api/history?' + p;
 
 		// 30 s cache — fast on paginated navigation, fresh enough for live use.
-		const json = await DataCache.fetch(url, { ttl: 30_000, type: 'json' });
+		const json = await DataCache.fetch(url, { ttl: TimeUnit.Minute * 5, type: 'json' });
 
 		if (!json.ok) {
 			setStatus($('history-status'), false, 'ERROR');

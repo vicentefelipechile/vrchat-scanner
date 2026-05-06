@@ -29,7 +29,7 @@ async function showDetail(sha256) {
 			// 5-minute persistent cache — detail pages are immutable once written.
 			// Bust the cache on every retry so we don't serve a stale 404.
 			if (attempt > 0) DataCache.clear(detailUrl);
-			const json = await DataCache.fetch(detailUrl, { ttl: 5 * 60_000, persistent: true, type: 'json' });
+			const json = await DataCache.fetch(detailUrl, { ttl: TimeUnit.Day * 7, persistent: true, type: 'json' });
 
 			if (json.ok) {
 				renderDetail(json);

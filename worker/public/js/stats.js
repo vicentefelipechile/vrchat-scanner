@@ -9,7 +9,7 @@ async function loadPlatformStats() {
 	setPending($('platform-stats-status'));
 	try {
 		// Cache stats for 30 s — avoids a round-trip when the user reopens the panel.
-		const json = await DataCache.fetch('/api/stats', { ttl: 30_000, type: 'json' });
+		const json = await DataCache.fetch('/api/stats', { ttl: TimeUnit.Second * 30, type: 'json' });
 		if (!json.ok) { setStatus($('platform-stats-status'), false, 'ERROR'); return; }
 		setStatus($('platform-stats-status'), true, 'Loaded');
 		$('stat-total').textContent   = json.total_scans;

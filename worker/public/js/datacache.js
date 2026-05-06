@@ -16,7 +16,7 @@
 // Time Unit Constants
 // =========================================================================================================
 
-const TimeUnit = Object.freeze({
+const TimeUnit = window.TimeUnit = Object.freeze({
 	Second: 1000,
 	Minute: 60 * 1000,
 	Hour:   60 * 60 * 1000,
@@ -46,7 +46,7 @@ const CACHE_PREFIX = 'cache:';
 function resolveOptions(options) {
 	if (typeof options === 'object' && options !== null) {
 		return {
-			ttl:        options.ttl        ?? 60_000,
+			ttl:        options.ttl        ?? TimeUnit.Minute,
 			persistent: options.persistent ?? false,
 			type:       options.type       ?? 'json',
 		};
@@ -94,11 +94,11 @@ function persistToStorage(url, entry) {
  *
  * @example
  * // Basic fetch with a 30-second TTL
- * const data = await DataCache.fetch('/api/stats', 30_000);
+ * const data = await DataCache.fetch('/api/stats', TimeUnit.Second * 30);
  *
  * @example
  * // Persistent fetch that survives page reloads, 5-minute TTL
- * const config = await DataCache.fetch('/api/config', { ttl: 300_000, persistent: true });
+ * const config = await DataCache.fetch('/api/config', { ttl: TimeUnit.Minute * 5, persistent: true });
  *
  * @example
  * // Prefetch speculatively on hover
@@ -155,7 +155,7 @@ const DataCache = window.DataCache = {
 	 * @returns {Promise<unknown>} Resolves to a parsed JSON object or raw text string depending on `options.type`.
 	 * @throws Re-throws any network error or non-OK HTTP response as an `Error`.
 	 */
-	async fetch(url, options = 60_000) {
+	async fetch(url, options = TimeUnit.Minute) {
 		const now = Date.now();
 		const { ttl, persistent, type } = resolveOptions(options);
 
@@ -234,7 +234,7 @@ const DataCache = window.DataCache = {
 	 * @param {string}              url     - The URL to prefetch. Used as the cache key.
 	 * @param {CacheOptions|number} options - CacheOptions object or plain TTL in ms. Defaults to 60 000 ms.
 	 */
-	prefetch(url, options = 60_000) {
+	prefetch(url, options = TimeUnit.Minute) {
 		const now = Date.now();
 		const { ttl } = resolveOptions(options);
 
