@@ -46,25 +46,40 @@ executing the content.
 | Drag-and-drop (folder) | `vrcstorage-scanner <FOLDER>` | Recursive scan of a directory |
 | HTTP server | `vrcstorage-scanner serve --port 8080` | Cloudflare Containers (R2 download) |
 
-**Server endpoints:** `POST /api/upload`, `POST /api/upload/start`, `PUT /api/upload/part`, `POST /api/upload/end`, `GET /api/download/:hash`, `POST /api/scan`, `POST /api/sanitize`, `POST /api/scan-batch`, `GET /api/health`, `GET /api/cache-stats`, `GET /api/history`, `GET /api/history/:sha256`, `GET /api/search?q=`, `GET /api/stats`, `GET /file/:sha256`.
+**Server endpoints:** `POST /api/upload`, `POST /api/upload/start`, `PUT /api/upload/part`, `POST /api/upload/end`, `POST /api/upload/abort`, `GET /api/download/:hash`, `POST /api/scan`, `POST /api/sanitize`, `POST /api/scan-batch`, `GET /api/health`, `GET /api/cache-stats`, `GET /api/history`, `GET /api/history/:sha256`, `GET /api/search?q=`, `GET /api/stats`, `GET /file/:sha256`.
 Worker applies a **two-level cache** on `/api/scan`: KV (24 h, edge-local) checked first, then D1
 (30-day TTL) on KV miss; results are written to both on every new scan. Detail, stats, and
 cache-stats endpoints also use KV (24 h / 60 s / 30 s respectively).
 A vanilla SPA is served from `worker/public/` via Cloudflare Static Assets
 (`not_found_handling: "single-page-application"`).
 Supports `?format=txt`, `?verbose=true`, `?min_severity=high` query params.
+Turnstile human-verification is enforced **only** on `POST /api/upload/start`. All downstream
+endpoints (`/part`, `/end`, `/abort`, `/scan`, `/sanitize`) are implicitly gated because a valid
+`upload_id` / download URL can only be obtained after passing Turnstile on `/start`.
+Two rate limiters protect the API: `UPLOAD_RATE_LIMITER` (30 req/min, applied to upload/download
+endpoints) and `API_RATE_LIMITER` (60 req/min, applied to scan/history/search/stats endpoints).
+Security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`) are applied to
+all Worker-generated responses via a global middleware.
+The Worker injects the opaque `DOWNLOAD_SECRET` token into R2 download URLs before forwarding
+requests to the container. The frontend never sees this secret; `GET /api/download/:hash` returns
+`401` if the `dl_token` query parameter does not match.
 Sanitize returns cleaned `.unitypackage` bytes with metadata in headers.
 Batch scan accepts an array of files and returns aggregate results.
+`POST /api/upload/abort` cancels an in-progress R2 multipart upload (releases orphaned parts);
+authentication is implicit via the opaque `upload_id` — only a client with a valid ID from
+`/api/upload/start` can call this endpoint. The frontend calls this on any upload error.
 
 **Web platform features (VirusTotal-style):**
 - **File upload (multipart):** Users drag-and-drop or browse for files. SHA-256 is computed
-  in-browser via Web Crypto API. The upload uses a three-step protocol:
+  in-browser via Web Crypto API. The upload uses a four-step protocol:
   1. `POST /api/upload/start` — Turnstile verified; initiates an R2 multipart upload;
      returns `upload_id` + `r2_key`.
   2. `PUT /api/upload/part` — sends one binary chunk (≥ 5 MB except last); auth is implicit
      via the opaque `upload_id`. Returns `etag` + `part_number`.
   3. `POST /api/upload/end` — completes the R2 multipart upload; returns a download URL
      for the scanner container. R2 objects are auto-cleaned after scan completes.
+  4. `POST /api/upload/abort` — cancels an in-progress upload on any error, releasing all
+     uploaded R2 parts immediately to prevent orphaned data.
   The SPA shows a real progress bar (5 %→80 % across parts, then 88 %→100 % for scan).
   Chunk size is 10 MB (satisfies R2 ≥ 5 MB requirement for all non-last parts).
 - **Persistent history:** Scan results are stored permanently in D1 (`scans` table) alongside
@@ -126,7 +141,10 @@ vrcstorage-scanner/
 │   │   ├── assets/
 │   │   │   ├── mod.rs          ← analyze_asset(): dispatches by AssetType
 │   │   │   ├── texture_scanner.rs  ← magic bytes, entropy (skips PNG/JPEG/WebP/EXR/HDR/DDS), byte-by-byte polyglot scan with PE validation
-│   │   │   ├── audio_scanner.rs    ← entropy (compressed formats exempt), byte-by-byte polyglot scan with PE validation
+│   │   │   ├── audio_scanner.rs    ← structural WAV/RIFF + AIFF/AIFC chunk walk (fmt validation, trailing-data check,
+│   │   │   │                          suspicious-chunk detection); entropy measured on data/SSND chunk only;
+│   │   │   │                          compressed formats (MP3/OGG/AAC/FLAC/Opus/M4A) checked only for suspiciously low entropy;
+│   │   │   │                          byte-by-byte polyglot scan with full DOS+PE validation on all formats
 │   │   │   └── prefab_scanner.rs   ← YAML parsing, externalObjects, inline Base64
 │   │   └── metadata/
 │   │       ├── mod.rs          ← analyze_metadata() + pub mod declarations
@@ -205,15 +223,15 @@ vrcstorage-scanner/
     │   │   ├── stats.css       ← Stats panel styles
     │   │   └── responsive.css  ← Responsive breakpoints
     │   └── js/                 ← Modular scripts (loaded in order in index.html)
+    │       ├── datacache.js    ← Two-layer in-memory + localStorage cache; exposes DataCache and TimeUnit globals
     │       ├── helpers.js      ← Shared utilities: $(), formatBytes, formatDuration, riskBadge
     │       ├── turnstile.js    ← Cloudflare Turnstile widget lifecycle
     │       ├── router.js       ← SPA panel routing + collapsible buttons
-    │       ├── upload.js       ← Multipart upload flow + structured result renderer
-    │       ├── history.js      ← Scan history panel + pagination
-    │       ├── detail.js       ← Scan detail panel (VirusTotal-style)
-    │       ├── stats.js        ← Platform statistics panel
-    │       ├── search.js       ← Global hash/filename search
-    │       └── misc.js         ← Miscellaneous (collapsible, etc.)
+    │       ├── upload.js       ← Multipart upload flow (start/part/end/abort) + structured result renderer
+    │       ├── history.js      ← Scan history panel + pagination (uses DataCache)
+    │       ├── detail.js       ← Scan detail panel (VirusTotal-style, uses DataCache)
+    │       ├── stats.js        ← Platform statistics panel (uses DataCache)
+    │       └── search.js       ← Global hash/filename search
     ├── migrations/             ← D1 migration SQL files
     │   ├── 0001_create_scan_cache.sql  ← scan_cache table + indexes
     │   └── 0002_create_scans.sql       ← scans table for persistent history
@@ -222,7 +240,8 @@ vrcstorage-scanner/
         ├── cache.ts            ← D1 query helpers: getCachedScan, putCachedScan, getCacheStats
         ├── history.ts          ← D1 query helpers: getScanHistory, getScanByHash, searchScans, putScanResult, getStats
         ├── embed.ts            ← buildEmbedHtml(): SSR Open Graph / Twitter Card HTML for /file/:sha256 share links
-        └── upload.ts           ← R2 upload handler + download serve + cleanup
+        ├── upload.ts           ← R2 upload handler + download serve + multipart (start/part/end/abort) + cleanup
+        └── kv.ts               ← KV helpers: kvGet, kvGetText, kvPut, kvDelete + key-builders + TTL constants
 ```
 
 ---
@@ -896,9 +915,12 @@ The following is the definitive list of `FindingId` variants as they exist in
 
 **Asset scanners**
 - `MagicMismatch` → `MAGIC_MISMATCH`
-- `MagicMismatchImage` → `MAGIC_MISMATCH_IMAGE`
+- `MagicMismatchImage` → `MAGIC_MISMATCH_IMAGE` *(mislabelled image format — lower severity than full mismatch)*
 - `TextureHighEntropy` → `TEXTURE_HIGH_ENTROPY`
 - `AudioUnusualEntropy` → `AUDIO_UNUSUAL_ENTROPY`
+- `AudioTrailingData` → `AUDIO_TRAILING_DATA` *(bytes found after all valid RIFF/AIFF chunks — possible hidden payload)*
+- `AudioSuspiciousChunk` → `AUDIO_SUSPICIOUS_CHUNK` *(unknown RIFF chunk type with non-trivial payload — possible steganography)*
+- `AudioMalformedHeader` → `AUDIO_MALFORMED_HEADER` *(WAV/AIFF header structure is invalid or internally inconsistent)*
 - `PolyglotFile` → `POLYGLOT_FILE`
 
 **Metadata**
@@ -981,6 +1003,10 @@ modules.
 | PE section entropy 6.8–7.2 | `PE_HIGH_ENTROPY_SECTION` | Medium | `PTS_PE_HIGH_ENTROPY_MEDIUM` = 20 |
 | Future timestamp in `.meta` | `META_FUTURE_TIMESTAMP` | Medium | `PTS_META_FUTURE_TIMESTAMP` = 20 |
 | High entropy in texture | `TEXTURE_HIGH_ENTROPY` | Medium | `PTS_TEXTURE_HIGH_ENTROPY` = 8 |
+| Unusual audio entropy (WAV/AIFF data chunk or compressed) | `AUDIO_UNUSUAL_ENTROPY` | Low | `PTS_AUDIO_UNUSUAL_ENTROPY` |
+| Trailing bytes after last RIFF/AIFF chunk | `AUDIO_TRAILING_DATA` | Low | `PTS_AUDIO_TRAILING_DATA` |
+| Unknown RIFF chunk with non-trivial payload | `AUDIO_SUSPICIOUS_CHUNK` | Medium | `PTS_AUDIO_SUSPICIOUS_CHUNK` |
+| Malformed WAV/AIFF header structure | `AUDIO_MALFORMED_HEADER` | Low | `PTS_AUDIO_MALFORMED_HEADER` |
 | PE unnamed section | `PE_UNNAMED_SECTION` | Medium | `PTS_PE_UNNAMED_SECTION` = 20 |
 | PE inflated section | `PE_INFLATED_SECTION` | Medium | `PTS_PE_INFLATED_SECTION` = 20 |
 | LoadLibrary import | `DLL_IMPORT_LOADLIBRARY` | Low | `PTS_DLL_IMPORT_LOADLIBRARY` = 25 |

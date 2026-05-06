@@ -41,8 +41,8 @@
 
 - 🔴 **Critical** — `Process.Start()`, `Assembly.Load(bytes)`, executable files embedded in packages, path traversal
 - 🟠 **High** — Polyglot files (PE/ZIP inside textures or audio), unknown `[DllImport]`, hardcoded IPs, shell command strings, W+X PE sections
-- 🟡 **Medium** — HTTP clients, `BinaryFormatter`, `unsafe` blocks, magic byte mismatches, high-entropy PE sections, future `.meta` timestamps
-- 🟢 **Low** — Missing `.meta` files, obfuscated identifiers, excessive DLL count, DLL referenced by many assets
+- 🟡 **Medium** — HTTP clients, `BinaryFormatter`, `unsafe` blocks, magic byte mismatches, high-entropy PE sections, future `.meta` timestamps, unknown RIFF chunks in audio files
+- 🟢 **Low** — Missing `.meta` files, obfuscated identifiers, excessive DLL count, DLL referenced by many assets, unusual audio entropy, trailing data after RIFF/AIFF chunks, malformed WAV/AIFF headers
 
 Each finding is assigned a **risk score**. The final score maps to one of five risk levels with a recommended action: auto-publish, audit note, manual review, or reject.
 
@@ -79,17 +79,37 @@ the terminal window so you have time to read the results.
 
 ```
 vrcstorage-scanner [FILE]                    # Drag-and-drop shorthand (pauses on exit)
-vrcstorage-scanner scan <FILE> [OPTIONS]     # Explicit scan subcommand
-vrcstorage-scanner serve [OPTIONS]           # Start HTTP server
+vrcstorage-scanner scan <FILE> [OPTIONS]     # Explicit scan (single or multiple files/folders)
+vrcstorage-scanner sanitize <FILE> [OPTIONS] # Remove/neutralize malicious assets
+vrcstorage-scanner export <FILE> [OPTIONS]   # Extract package to folder or ZIP
+vrcstorage-scanner tree <FILE> [OPTIONS]     # Render internal file-tree
+vrcstorage-scanner serve [OPTIONS]           # Start HTTP server (Cloudflare Containers)
+vrcstorage-scanner credits                   # Show credits and project info
 
 Arguments (scan):
-  <FILE>   Path to file to scan (.unitypackage, .dll, .cs, .zip, ...)
+  <PATH...>   One or more paths (.unitypackage, .dll, .cs, .zip, folder...)
 
 Options (scan):
-  -o, --output <FORMAT>        Output format: "cli" (default) or "json"
+  -o, --output <FORMAT>        Output format: "cli" (default), "json", or "txt"
   -f, --output-file <PATH>     Write output to file instead of stdout
   -h, --help                   Print help
   -V, --version                Print version
+
+Options (sanitize):
+  -o, --output <PATH>          Output path [default: <input>-sanitized.unitypackage]
+  -s, --min-severity <LEVEL>   Minimum severity to act on: low|medium|high|critical [default: high]
+  -d, --dry-run                Show what would happen without writing output
+      --json                   Also emit JSON scan report
+
+Options (export):
+  -o, --output <FORMAT>        Output format: "folder" (default) or "zip"
+  -d, --out-dir <PATH>         Output directory or file
+  -m, --skip-meta              Omit .meta files from export
+
+Options (tree):
+  -e, --export <FORMAT>        Output format: "txt" (default), "json", or "xml"
+  -p, --pretty                 Use Unicode box-drawing (TXT only)
+  -f, --output-file <PATH>     Write output to file instead of stdout
 
 Options (serve):
   -p, --port <PORT>            Port to listen on (default: 8080)
@@ -249,6 +269,10 @@ Downloads a file from R2, scans it, and returns the full JSON report.
 { "ok": true }
 ```
 
+#### `POST /sanitize`
+
+Neutralizes malicious entries and returns cleaned `.unitypackage` bytes. File metadata (content type, asset count) is returned in response headers.
+
 ---
 
 ## 7. Deploy on Cloudflare Containers
@@ -332,7 +356,11 @@ Run the axum server directly (no Docker, no Worker):
 cargo run -- serve --port 8080
 ```
 
-Then hit `http://localhost:8080/gui` for the interactive test console.
+Then send a request directly:
+
+```bash
+curl -X POST http://localhost:8080/health
+```
 
 ### Key configuration details
 
@@ -355,9 +383,9 @@ export class ScannerContainer extends Container {
   "containers": [
     {
       "class_name": "ScannerContainer",
-      "image": "./Dockerfile",
-      "max_instances": 5,
-      "instance_type": "standard-2"   // 6 GiB RAM, handles 500 MB packages in memory
+      "image": "registry.cloudflare.com/...",
+      "max_instances": 2,
+      "instance_type": "standard-1"
     }
   ],
   "durable_objects": {
@@ -376,11 +404,10 @@ export class ScannerContainer extends Container {
 | Instance type | RAM | vCPU | Suitable for |
 |---|---|---|---|
 | `lite` | 256 MiB | 1/16 | Small C# files only |
-| `standard-1` | 4 GiB | 1/2 | Medium packages (< 100 MB) |
-| `standard-2` ★ | 6 GiB | 1 | Large packages (up to 500 MB) |
+| `standard-1` ★ | 4 GiB | 1/2 | Medium packages (< 100 MB) — **current default** |
+| `standard-2` | 6 GiB | 1 | Large packages (up to 500 MB) |
 | `standard-3` | 8 GiB | 2 | Heavy concurrent scanning |
 
-★ default for this project
 
 ### Limitations
 
