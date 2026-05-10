@@ -23,7 +23,7 @@ use crate::scoring::RiskLevel;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const DEFAULT_MAX_DOWNLOAD_BYTES: u64 = 500 * 1024 * 1024; // 500 MB
+const DEFAULT_MAX_DOWNLOAD_BYTES: u64 = 1500 * 1024 * 1024; // 1500 MB
 
 // ─── Request / response types ─────────────────────────────────────────────────
 

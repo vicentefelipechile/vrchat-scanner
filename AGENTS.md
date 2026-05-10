@@ -1669,7 +1669,7 @@ CREATE INDEX IF NOT EXISTS idx_scans_filename ON scans(filename);
    This project never writes to disk — all analysis runs in memory. No changes needed.
 5. **SIGTERM is handled.** The axum server's `shutdown_signal()` catches both `Ctrl+C` and
    `SIGTERM` for graceful shutdown when the container sleeps.
-6. **Instance sizing.** `standard-1` is the default — sufficient for packages up to the 500 MB
+6. **Instance sizing.** `standard-1` is the default — sufficient for packages up to the 1500 MB
    download limit.
 
 ### Deploy commands
@@ -1814,7 +1814,7 @@ processing remaining files.
 |---|---|
 | `200` | Scan/sanitize completed successfully |
 | `400` | SHA-256 mismatch, invalid severity, or empty batch |
-| `413` | File exceeds maximum download size (500 MB) |
+| `413` | File exceeds maximum download size (1500 MB) |
 | `502` | R2 download failed |
 | `500` | Internal scan/serialize error |
 
@@ -1824,7 +1824,7 @@ All error responses are JSON: `{ "error": "message", "code": <u16> }`.
 
 - Download timeout: **30 seconds**
 - Connect timeout: **10 seconds**
-- Maximum file size: **500 MB** (checked via `Content-Length` header and post-download)
+- Maximum file size: **1500 MB** (checked via `Content-Length` header and post-download)
 
 ### Memory model
 

@@ -17,8 +17,8 @@
 // Constants
 // =========================================================================================================
 
-/** Maximum file size accepted for upload: 500 MB */
-const MAX_UPLOAD_SIZE = 500 * 1024 * 1024;
+/** Maximum file size accepted for upload: 1500 MB */
+const MAX_UPLOAD_SIZE = 1500 * 1024 * 1024;
 
 /** R2 key prefix for temporary uploads */
 const UPLOAD_PREFIX = 'uploads';

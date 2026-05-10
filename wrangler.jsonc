@@ -16,7 +16,7 @@
       "name": "vrcstorage-scanner-scannercontainer",
       "scheduling_policy": "default",
       "class_name": "ScannerContainer",
-      "image": "registry.cloudflare.com/3927234333597c7a6b80c66b997b6257/vrcstorage-scanner-scannercontainer:ad9a5096",
+      "image": "registry.cloudflare.com/3927234333597c7a6b80c66b997b6257/vrcstorage-scanner-scannercontainer:b9724d44",
       // "image": "./Dockerfile",
       "max_instances": 2,
       "instance_type": "standard-1"

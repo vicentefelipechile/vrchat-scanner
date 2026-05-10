@@ -44,8 +44,25 @@ async function computeSHA256(file) {
 
 // ── File selection ────────────────────────────────────────────────────────────
 
+/** Allowed file extensions for upload. Must match the scanner's supported formats. */
+const ALLOWED_EXTENSIONS = ['.unitypackage', '.zip'];
+
+/**
+ * Returns true when the filename ends with one of the allowed extensions.
+ * This is a fast client-side guard; the server validates magic bytes for
+ * files that somehow pass this check with a wrong extension.
+ */
+function isAllowedExtension(filename) {
+	const lower = filename.toLowerCase();
+	return ALLOWED_EXTENSIONS.some(function (ext) { return lower.endsWith(ext); });
+}
+
 async function processUploadFile(file) {
-	if (file.size > 500 * 1024 * 1024) { alert('File too large. Maximum size is 500 MB.'); return; }
+	if (file.size > 1500 * 1024 * 1024) { alert('File too large. Maximum size is 1500 MB.'); return; }
+	if (!isAllowedExtension(file.name)) {
+		alert('Unsupported file type: "' + file.name + '".\nOnly .unitypackage and .zip files are accepted.');
+		return;
+	}
 	uploadFile = file;
 	$('upload-filename').textContent = file.name;
 	$('upload-filesize').textContent = formatBytes(file.size);
@@ -248,10 +265,18 @@ async function uploadAndScan() {
 		}
 	}
 
+
 	try {
 		const numWorkers = Math.min(CONCURRENCY, totalChunks);
 		await Promise.all(Array.from({ length: numWorkers }, worker));
-	} catch (e) { abortR2Session(); abortUpload('Network error: ' + e.message); return; }
+	} catch (e) {
+		abortR2Session();
+		// If the server rejected the file type (magic-byte check on part 1),
+		// surface the server message directly rather than a generic "Network error".
+		const msg = e.message || 'Upload failed';
+		abortUpload(msg);
+		return;
+	}
 
 	// ── Step 4: Complete upload ───────────────────────────────────────────────
 	setProgress(83, 'Finalizing upload...');
