@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="vrcstorage-scanner — Static analysis for Unity/VRChat packages" />
+    <title>vrcstorage-scanner</title>
+    <link rel="stylesheet" href="/src/app.css" />
+  </head>
+  <body class="bg-surface-900 text-slate-100 antialiased overflow-hidden h-screen">
+
+    <!-- App shell ─────────────────────────────────────────────────────────── -->
+    <div id="app" class="flex h-screen w-screen overflow-hidden">
+
+      <!-- Sidebar -->
+      <aside id="sidebar"
+        class="flex w-60 flex-shrink-0 flex-col border-r border-white/[0.05]
+               bg-gradient-to-b from-[#0d1017] to-[#0a0c12]">
+      </aside>
+
+      <!-- Main content area -->
+      <main id="main" class="flex flex-1 flex-col overflow-hidden">
+
+        <!-- Scan view -->
+        <div id="view-scan" class="view h-full overflow-hidden p-6 gap-6"></div>
+
+        <!-- History view -->
+        <div id="view-history" class="view hidden h-full overflow-y-auto p-6 gap-4"></div>
+
+        <!-- Settings view -->
+        <div id="view-settings" class="view hidden h-full overflow-y-auto p-6 gap-6"></div>
+
+      </main>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

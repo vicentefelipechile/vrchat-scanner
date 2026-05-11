@@ -1,0 +1,5 @@
+# Tauri CLI watcher ignore rules (same syntax as .gitignore)
+# Prevents Vite's dependency pre-bundling writes from triggering
+# unnecessary Rust backend rebuilds.
+node_modules/
+dist/

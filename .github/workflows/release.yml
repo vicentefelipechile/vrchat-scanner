@@ -69,10 +69,82 @@ jobs:
             ${{ matrix.artifact }}.sha256
           retention-days: 1
 
+  # === Build GUI matrix =====================================================
+  build-gui:
+    name: Build GUI — ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+          - os: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: tauri/package-lock.json
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tauri/src-tauri -> target
+          key: tauri-release-${{ matrix.os }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Node dependencies
+        working-directory: ./tauri
+        run: npm ci
+
+      - name: Build Tauri app
+        working-directory: ./tauri
+        run: npm run tauri build
+
+      - name: Rename Windows Installer for end-users
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cp tauri/src-tauri/target/release/bundle/nsis/*.exe vrcstorage-scanner.exe
+
+      - name: Upload Windows GUI artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vrcstorage-scanner-gui-windows
+          path: |
+            vrcstorage-scanner.exe
+            tauri/src-tauri/target/release/bundle/msi/*.msi
+          retention-days: 1
+          if-no-files-found: ignore
+
+      - name: Upload Linux GUI artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vrcstorage-scanner-gui-linux
+          path: |
+            tauri/src-tauri/target/release/bundle/appimage/*.AppImage
+            tauri/src-tauri/target/release/bundle/deb/*.deb
+          retention-days: 1
+          if-no-files-found: ignore
+
   # === Create GitHub Release with all binaries ==============================
   release:
     name: Publish GitHub Release
-    needs: build
+    needs: [build, build-gui]
     runs-on: ubuntu-latest
     permissions:
       contents: write   # needed to create releases
@@ -102,15 +174,23 @@ jobs:
           body: |
             ## 📦 Assets
 
+            ### CLI (Terminal)
             | File | Platform |
             |---|---|
-            | `vrcstorage-scanner-windows-x86_64.exe` | Windows 10/11 (64-bit) |
-            | `vrcstorage-scanner-linux-x86_64` | Linux x86_64 (glibc ≥ 2.17) |
+            | \`vrcstorage-scanner-windows-x86_64.exe\` | Windows 10/11 (64-bit) |
+            | \`vrcstorage-scanner-linux-x86_64\` | Linux x86_64 (glibc ≥ 2.17) |
 
-            > **Verify integrity:** each binary ships with a `.sha256` checksum file.
-            > ```
+            > **Verify integrity:** each binary ships with a \`.sha256\` checksum file.
+            > \`\`\`
             > sha256sum -c vrcstorage-scanner-linux-x86_64.sha256
-            > ```
+            > \`\`\`
+
+            ### GUI (Desktop App)
+            | File | Platform |
+            |---|---|
+            | \`vrcstorage-scanner.exe\` | Windows 10/11 (Recomendado) |
+            | \`vrcstorage-scanner-gui_*.msi\` | Windows Installer (MSI) |
+            | \`vrcstorage-scanner-gui_*.AppImage\` / \`.deb\` | Linux |
 
   # === Discord notification ==================================================
   notify-discord:
@@ -166,7 +246,7 @@ jobs:
                 \"fields\": [
                   {
                     \"name\": \"📦 Descargas\",
-                    \"value\": \"[Windows .exe](${URL}) • [Linux x86_64](${URL})\",
+                    \"value\": \"**CLI:** [Windows](${URL}) • [Linux](${URL})\\n**GUI:** [Windows](${URL}) • [Linux](${URL})\",
                     \"inline\": false
                   },
                   {

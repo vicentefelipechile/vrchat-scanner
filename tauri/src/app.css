@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  /* Base surfaces — flat, no gradients */
+  --color-surface-900: #0d1117;
+  --color-surface-800: #131920;
+  --color-surface-700: #181f28;
+  --color-surface-600: #1e2733;
+
+  /* Risk levels — matching the web */
+  --color-risk-clean:    #22c55e;
+  --color-risk-low:      #60a5fa;
+  --color-risk-medium:   #f59e0b;
+  --color-risk-high:     #f97316;
+  --color-risk-critical: #ef4444;
+
+  /* Typography */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+               "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "Fira Code",
+               Menlo, Monaco, Consolas, "Courier New", monospace;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 0; }
+::-webkit-scrollbar-thumb:hover { background: #4a5568; }
+
+/* No global transition on everything — too noisy */
+* { box-sizing: border-box; }
+
+/* View panels — flex column by default; hidden overrides to none */
+.view          { display: flex; flex-direction: column; }
+.view.hidden   { display: none !important; }
+
+/* Spinner */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner { animation: spin 0.8s linear infinite; }
+
+/* Drop zone drag-over */
+.drop-zone.drag-over {
+  border-color: rgba(255,255,255,0.3) !important;
+  background: rgba(255,255,255,0.03) !important;
+}
+
+/* Finding accordion */
+.finding-detail { display: none; }
+.finding-row.open .finding-detail { display: block; }

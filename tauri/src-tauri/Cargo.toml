@@ -1,0 +1,32 @@
+[package]
+name = "vrcstorage-scanner-gui"
+version = "0.9.0"
+description = "vrcstorage-scanner Desktop GUI"
+authors = ["SummerTYT <vicentefelipechile>"]
+edition = "2021"
+
+[lib]
+name = "tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+vrcstorage_scanner = { path = "../..", package = "vrcstorage-scanner" }
+
+tauri               = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs     = "2"
+tauri-plugin-shell  = "2"
+tauri-plugin-store  = "2"
+tauri-plugin-opener = "2"
+
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+tokio       = { version = "1", features = ["full"] }
+
+hmac    = "0.12"
+sha2    = "0.10"
+hex     = "0.4"
+reqwest = { version = "0.12", features = ["json"] }

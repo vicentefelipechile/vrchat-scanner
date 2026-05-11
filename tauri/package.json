@@ -1,0 +1,30 @@
+{
+  "name": "vrcstorage-scanner-gui",
+  "version": "0.8.0",
+  "description": "vrcstorage-scanner Desktop GUI",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-fs": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-shell": "^2",
+    "@tauri-apps/plugin-store": "^2",
+    "lucide": "^1.14.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.0",
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^25.6.2",
+    "tailwindcss": "^4.3.0",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3"
+  }
+}
