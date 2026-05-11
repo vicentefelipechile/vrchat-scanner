@@ -54,11 +54,7 @@ jobs:
       - name: Compute SHA-256 checksum
         shell: bash
         run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
-          else
-            sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
-          fi
+          sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -119,10 +115,10 @@ jobs:
         with:
           name: vrcstorage-scanner-gui-windows
           path: |
-            tauri/src-tauri/target/release/bundle/nsis/*.exe
-            tauri/src-tauri/target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/msi/*.msi
           retention-days: 1
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
       - name: Upload Linux GUI artifact
         if: runner.os == 'Linux'
@@ -130,10 +126,11 @@ jobs:
         with:
           name: vrcstorage-scanner-gui-linux
           path: |
-            tauri/src-tauri/target/release/bundle/appimage/*.AppImage
-            tauri/src-tauri/target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
+            target/release/bundle/deb/*.deb
+            target/release/bundle/rpm/*.rpm
           retention-days: 1
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
   # === Create GitHub Release with all binaries ==============================
   release:
@@ -184,13 +181,16 @@ jobs:
             |---|---|
             | \`vrcstorage-scanner_*_x64-setup.exe\` | Windows 10/11 (NSIS Installer) |
             | \`vrcstorage-scanner_*_x64_en-US.msi\` | Windows Installer (MSI) |
+            | \`vrcstorage-scanner_*_amd64.AppImage\` | Linux (AppImage) |
+            | \`vrcstorage-scanner_*_amd64.deb\` | Linux (Debian/Ubuntu) |
+            | \`vrcstorage-scanner-*_x86_64.rpm\` | Linux (Fedora/RHEL) |
 
   # === Discord notification ==================================================
   notify-discord:
     name: Notify Discord
     needs: release
     runs-on: ubuntu-latest
-    # Only run if DISCORD_WEBHOOK_URL secret is configured
+    # Only run if DISCORD_NOTIFY variable is set to 'true'
     if: ${{ vars.DISCORD_NOTIFY == 'true' }}
 
     steps:
