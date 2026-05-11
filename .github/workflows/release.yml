@@ -113,19 +113,13 @@ jobs:
         working-directory: ./tauri
         run: npm run tauri build
 
-      - name: Rename Windows Installer for end-users
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          cp tauri/src-tauri/target/release/bundle/nsis/*.exe vrcstorage-scanner.exe
-
       - name: Upload Windows GUI artifact
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: vrcstorage-scanner-gui-windows
           path: |
-            vrcstorage-scanner.exe
+            tauri/src-tauri/target/release/bundle/nsis/*.exe
             tauri/src-tauri/target/release/bundle/msi/*.msi
           retention-days: 1
           if-no-files-found: ignore
@@ -188,9 +182,8 @@ jobs:
             ### GUI (Desktop App)
             | File | Platform |
             |---|---|
-            | \`vrcstorage-scanner.exe\` | Windows 10/11 (Recomendado) |
-            | \`vrcstorage-scanner-gui_*.msi\` | Windows Installer (MSI) |
-            | \`vrcstorage-scanner-gui_*.AppImage\` / \`.deb\` | Linux |
+            | \`vrcstorage-scanner_*_x64-setup.exe\` | Windows 10/11 (NSIS Installer) |
+            | \`vrcstorage-scanner_*_x64_en-US.msi\` | Windows Installer (MSI) |
 
   # === Discord notification ==================================================
   notify-discord:
