@@ -57,3 +57,49 @@ jobs:
 
       - name: Run integration tests only
         run: cargo test --test integration --verbose
+
+  # === Lint & type-check Tauri GUI ==========================================
+  check-gui:
+    name: Check & Clippy (GUI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: tauri/package-lock.json
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tauri/src-tauri -> target
+          key: tauri-check-ubuntu
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Node dependencies
+        working-directory: ./tauri
+        run: npm ci
+
+      - name: Check & Build Frontend (TypeScript + Vite)
+        working-directory: ./tauri
+        run: npm run build
+
+      - name: cargo check (Tauri Backend)
+        working-directory: ./tauri/src-tauri
+        run: cargo check
+
+      - name: cargo clippy (Tauri Backend, zero warnings)
+        working-directory: ./tauri/src-tauri
+        run: cargo clippy -- -D warnings
