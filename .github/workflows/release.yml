@@ -188,27 +188,39 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: dist/**
           body: |
-            ## 📦 Assets
+            ## 📦 Downloads
 
-            ### CLI (Terminal)
+            > [!TIP]
+            > **Not sure which file to pick?**
+            > - Windows user → grab the `.exe` (NSIS installer, recommended) or `.msi`
+            > - Linux user → grab `.AppImage` (works on most distros), `.deb` (Ubuntu/Debian), or `.rpm` (Fedora/RHEL)
+            > - Just want the terminal tool → grab the **CLI** binary for your OS
+
+            ---
+
+            ### 🖥️ GUI — Desktop App
+
+            | File | Platform | Format |
+            |---|---|---|
+            | `vrcstorage-scanner_*_x64-setup.exe` | Windows 10/11 | NSIS Installer ✅ Recommended |
+            | `vrcstorage-scanner_*_x64_en-US.msi` | Windows 10/11 | MSI Installer |
+            | `vrcstorage-scanner_*_amd64.AppImage` | Linux x86_64 | AppImage (universal) |
+            | `vrcstorage-scanner_*_amd64.deb` | Ubuntu / Debian | DEB Package |
+            | `vrcstorage-scanner-*_x86_64.rpm` | Fedora / RHEL | RPM Package |
+
+            ---
+
+            ### ⌨️ CLI — Terminal Only
+
             | File | Platform |
             |---|---|
-            | \`vrcstorage-scanner-windows-x86_64.exe\` | Windows 10/11 (64-bit) |
-            | \`vrcstorage-scanner-linux-x86_64\` | Linux x86_64 (glibc ≥ 2.17) |
+            | `vrcstorage-scanner-windows-x86_64.exe` | Windows 10/11 (64-bit) |
+            | `vrcstorage-scanner-linux-x86_64` | Linux x86_64 (glibc ≥ 2.17) |
 
-            > **Verify integrity:** each binary ships with a \`.sha256\` checksum file.
-            > \`\`\`
+            > **Verify integrity:** every CLI binary includes a `.sha256` checksum file.
+            > ```
             > sha256sum -c vrcstorage-scanner-linux-x86_64.sha256
-            > \`\`\`
-
-            ### GUI (Desktop App)
-            | File | Platform |
-            |---|---|
-            | \`vrcstorage-scanner_*_x64-setup.exe\` | Windows 10/11 (NSIS Installer) |
-            | \`vrcstorage-scanner_*_x64_en-US.msi\` | Windows Installer (MSI) |
-            | \`vrcstorage-scanner_*_amd64.AppImage\` | Linux (AppImage) |
-            | \`vrcstorage-scanner_*_amd64.deb\` | Linux (Debian/Ubuntu) |
-            | \`vrcstorage-scanner-*_x86_64.rpm\` | Linux (Fedora/RHEL) |
+            > ```
 
   # === Discord notification ==================================================
   notify-discord:
