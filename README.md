@@ -13,14 +13,15 @@
 
 1. [What it does](#1-what-it-does)
 2. [Quick Start](#2-quick-start)
-3. [CLI Usage](#3-cli-usage)
-4. [JSON Output](#4-json-output)
-5. [Risk Levels](#5-risk-levels)
-6. [Server Mode](#6-server-mode)
-7. [Deploy on Cloudflare Containers](#7-deploy-on-cloudflare-containers)
-8. [Building from Source](#8-building-from-source)
-9. [Running Tests](#9-running-tests)
-10. [License](#10-license)
+3. [Desktop GUI (Tauri)](#3-desktop-gui-tauri)
+4. [CLI Usage](#4-cli-usage)
+5. [JSON Output](#5-json-output)
+6. [Risk Levels](#6-risk-levels)
+7. [Server Mode](#7-server-mode)
+8. [Deploy on Cloudflare Containers](#8-deploy-on-cloudflare-containers)
+9. [Building from Source](#9-building-from-source)
+10. [Running Tests](#10-running-tests)
+11. [License](#11-license)
 
 ---
 
@@ -75,7 +76,117 @@ the terminal window so you have time to read the results.
 
 ---
 
-## 3. CLI Usage
+## 3. Desktop GUI (Tauri)
+
+`vrcstorage-scanner` ships an optional native desktop application built with **[Tauri v2](https://v2.tauri.app/)**. It wraps the same Rust analysis engine in a polished graphical interface, making the tool accessible to non-technical users.
+
+### Features
+
+- **Drag-and-drop scanning** — drop one or more `.unitypackage` files (or a whole folder) directly onto the window
+- **Batch progress tracking** — each file shows its own status card with a progress indicator and final risk badge
+- **Interactive file-tree viewer** — collapsible tree of every asset inside the package with type icons
+- **Sanitize panel** — remove or neutralize dangerous assets in one click (dry-run preview supported)
+- **Export panel** — extract the package to a folder or ZIP archive
+- **Scan history** — all past results stored locally via `tauri-plugin-store`; searchable and re-openable
+- **Settings panel** — configure default severity threshold, output format, theme, and more
+
+### Architecture
+
+```
+tauri/
+├── index.html               ← SPA shell (three view panels: scan, history, settings)
+├── vite.config.ts           ← Vite + @tailwindcss/vite bundler config
+├── package.json             ← Node deps: @tauri-apps/* plugins, lucide icons, tailwindcss, vite, typescript
+├── tsconfig.json
+│
+├── src/                     ← Vanilla TypeScript frontend (no framework)
+│   ├── main.ts              ← Entry point: mounts sidebar, bootstraps router + views
+│   ├── router.ts            ← SPA panel router (scan | history | settings)
+│   ├── store.ts             ← Module-level reactive state (EventTarget-based AppStore)
+│   ├── types.ts             ← TypeScript mirrors of all Rust IPC structs
+│   ├── tauri.ts             ← Typed invoke() wrappers for every backend command
+│   ├── icons.ts             ← Asset-type → Lucide icon / color mapping
+│   ├── app.css              ← Global styles (Tailwind CSS v4 + custom tokens)
+│   ├── components/
+│   │   ├── drop-zone.ts     ← Drag-and-drop target + file-browse button
+│   │   ├── findings-list.ts ← Findings table with severity filter chips
+│   │   ├── results-card.ts  ← Per-file scan result card (risk badge, stats, actions)
+│   │   ├── sanitize-panel.ts← Sanitize options + result summary
+│   │   ├── sidebar.ts       ← Navigation sidebar (mounts nav links + keyboard shortcuts)
+│   │   └── tree-viewer.ts   ← Recursive file-tree renderer with collapsible nodes
+│   └── views/
+│       ├── scan.ts          ← Main scan view: drop-zone, progress, results, tree/sanitize/export tabs
+│       ├── history.ts       ← History view: list + detail panel per entry
+│       └── settings.ts      ← Settings view: form backed by tauri-plugin-store
+│
+└── src-tauri/               ← Tauri Rust backend (crate: vrcstorage-scanner-gui)
+    ├── tauri.conf.json      ← App identity, window config (1200×660, min 900×600), bundle targets
+    ├── build.rs
+    ├── capabilities/        ← Tauri v2 permission scopes (dialog, fs, shell, store, opener)
+    │
+    └── src/
+        ├── main.rs          ← Binary entry point (calls lib run())
+        ├── lib.rs           ← Registers plugins + invoke_handler with all commands
+        ├── state.rs         ← AppState (Tauri managed state)
+        └── commands/
+            ├── mod.rs       ← Re-exports sub-modules
+            ├── scan.rs      ← scan_file (streaming Channel), collect_packages, save_report, generate_txt_report
+            ├── sanitize.rs  ← sanitize_file → SanitizeResult
+            ├── export.rs    ← export_file → ExportResult
+            └── tree.rs      ← get_tree → SerTreeNode, export_tree → String
+```
+
+### IPC Commands
+
+| Command | Direction | Description |
+|---|---|---|
+| `scan_file` | Frontend → Backend | Scan a single file; streams `ScanProgress` events via `Channel` |
+| `collect_packages` | Frontend → Backend | Resolve dropped paths (files/folders) to a flat list of `.unitypackage` files |
+| `save_report` | Frontend → Backend | Write a TXT/JSON report string to disk |
+| `generate_txt_report` | Frontend → Backend | Render a `ScanReport` as plain text (uses `txt_reporter`) |
+| `sanitize_file` | Frontend → Backend | Sanitize a package; returns `SanitizeResult` counts + output path |
+| `export_file` | Frontend → Backend | Extract package to folder or ZIP; returns `ExportResult` |
+| `get_tree` | Frontend → Backend | Parse package tree and return `SerTreeNode` hierarchy for rendering |
+| `export_tree` | Frontend → Backend | Render tree as TXT / JSON / XML string for save-file dialog |
+
+### Building the GUI
+
+**Prerequisites:** Node.js ≥ 18, Rust stable, OS build tools (Visual Studio C++ Build Tools on Windows, Xcode CLT on macOS, `libwebkit2gtk-4.1-dev` + `patchelf` on Linux). See the [Tauri prerequisites guide](https://v2.tauri.app/start/prerequisites/).
+
+```bash
+cd tauri
+npm install
+
+# Development (hot-reload frontend + auto Rust recompile)
+npm run tauri dev
+
+# Production build (creates installers in src-tauri/target/release/bundle/)
+npm run tauri build
+```
+
+**Output installers** (`src-tauri/target/release/bundle/`):
+
+| OS | Formats |
+|---|---|
+| Windows | NSIS `.exe` installer, MSI `.msi` |
+| Linux | AppImage, `.deb`, `.rpm` |
+| macOS | `.app` bundle, `.dmg` |
+
+### Cargo workspace
+
+The repository is a Cargo **workspace** with two members:
+
+```
+[workspace]
+members = [".", "tauri/src-tauri"]
+```
+
+- `.` → `vrcstorage-scanner` (CLI + library crate)
+- `tauri/src-tauri` → `vrcstorage-scanner-gui` (Tauri binary; depends on the library via `path = "../.."`)
+
+---
+
+## 4. CLI Usage
 
 ```
 vrcstorage-scanner [FILE]                    # Drag-and-drop shorthand (pauses on exit)
@@ -118,7 +229,7 @@ Options (serve):
 ### Example — CLI output
 
 ```
-vrcstorage-scanner v0.1.0
+vrcstorage-scanner v0.9.0
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 File:    my_mod.unitypackage
 SHA-256: a3f8c2...
@@ -155,7 +266,7 @@ Duration:      38ms
 
 ---
 
-## 4. JSON Output
+## 5. JSON Output
 
 ```bash
 vrcstorage-scanner scan my_avatar.unitypackage --output json
@@ -202,7 +313,7 @@ vrcstorage-scanner scan my_avatar.unitypackage --output json
 
 ---
 
-## 5. Risk Levels
+## 6. Risk Levels
 
 | Score | Level | CLI Exit Code | Recommended Action |
 |---|---|---|---|
@@ -216,7 +327,7 @@ vrcstorage-scanner scan my_avatar.unitypackage --output json
 
 ---
 
-## 6. Server Mode
+## 7. Server Mode
 
 The scanner ships a lightweight HTTP server designed to be called by a **Cloudflare Worker** or any backend service.
 
@@ -275,7 +386,7 @@ Neutralizes malicious entries and returns cleaned `.unitypackage` bytes. File me
 
 ---
 
-## 7. Deploy on Cloudflare Containers
+## 8. Deploy on Cloudflare Containers
 
 The server mode is designed to run as a **Cloudflare Container** — an on-demand, serverless container spawned by a [Worker](https://developers.cloudflare.com/workers/) through a [Durable Object](https://developers.cloudflare.com/durable-objects/) binding.
 
@@ -418,7 +529,7 @@ export class ScannerContainer extends Container {
 
 ---
 
-## 8. Building from Source
+## 9. Building from Source
 
 **Prerequisites:**
 - Rust 1.76 or later (`rustup update stable`)
@@ -426,7 +537,7 @@ export class ScannerContainer extends Container {
 
 ```bash
 # Clone
-git clone https://github.com/yourorg/vrcstorage-scanner.git
+git clone https://github.com/vicentefelipechile/vrchat-scanner.git
 cd vrcstorage-scanner
 
 # Debug build (faster compile)
@@ -439,9 +550,18 @@ cargo build --release
 ./target/release/vrcstorage-scanner
 ```
 
+### Building only the GUI
+
+```bash
+cd tauri
+npm install
+npm run tauri build
+# Installers appear in tauri/src-tauri/target/release/bundle/
+```
+
 ---
 
-## 9. Running Tests
+## 10. Running Tests
 
 ```bash
 # All tests (unit + integration)
@@ -477,7 +597,7 @@ The test suite covers **87 scenarios** (84 integration + 3 unit) including:
 
 ---
 
-## 10. License
+## 11. License
 
 [LICENSE](/LICENSE)
 
@@ -486,3 +606,5 @@ The test suite covers **87 scenarios** (84 integration + 3 unit) including:
 > For architecture notes, coding conventions, and contribution rules, see [AGENTS.md](AGENTS.md).
 >
 > For a non-technical guide to adjusting scanner sensitivity (score thresholds, domains, point values), see [CONFIG.md](CONFIG.md).
+>
+> For Tauri GUI build instructions, see [tauri/README.md](tauri/README.md).

@@ -113,10 +113,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          for f in tauri/src-tauri/target/release/bundle/nsis/*.exe; do
+          for f in target/release/bundle/nsis/*.exe; do
             mv "$f" "$(dirname $f)/gui-$(basename $f)"
           done
-          for f in tauri/src-tauri/target/release/bundle/msi/*.msi; do
+          for f in target/release/bundle/msi/*.msi; do
             mv "$f" "$(dirname $f)/gui-$(basename $f)"
           done
 
@@ -126,8 +126,8 @@ jobs:
         with:
           name: vrcstorage-scanner-gui-windows
           path: |
-            tauri/src-tauri/target/release/bundle/nsis/gui-*.exe
-            tauri/src-tauri/target/release/bundle/msi/gui-*.msi
+            target/release/bundle/nsis/gui-*.exe
+            target/release/bundle/msi/gui-*.msi
           retention-days: 1
           if-no-files-found: warn
           
@@ -135,13 +135,13 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          for f in tauri/src-tauri/target/release/bundle/appimage/*.AppImage; do
+          for f in target/release/bundle/appimage/*.AppImage; do
             mv "$f" "$(dirname $f)/gui-$(basename $f)"
           done
-          for f in tauri/src-tauri/target/release/bundle/deb/*.deb; do
+          for f in target/release/bundle/deb/*.deb; do
             mv "$f" "$(dirname $f)/gui-$(basename $f)"
           done
-          for f in tauri/src-tauri/target/release/bundle/rpm/*.rpm; do
+          for f in target/release/bundle/rpm/*.rpm; do
             mv "$f" "$(dirname $f)/gui-$(basename $f)"
           done
 
@@ -151,9 +151,9 @@ jobs:
         with:
           name: vrcstorage-scanner-gui-linux
           path: |
-            tauri/src-tauri/target/release/bundle/appimage/gui-*.AppImage
-            tauri/src-tauri/target/release/bundle/deb/gui-*.deb
-            tauri/src-tauri/target/release/bundle/rpm/gui-*.rpm
+            target/release/bundle/appimage/gui-*.AppImage
+            target/release/bundle/deb/gui-*.deb
+            target/release/bundle/rpm/gui-*.rpm
           retention-days: 1
           if-no-files-found: warn
 

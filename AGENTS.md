@@ -20,7 +20,8 @@ and rules that must be respected at all times.
 10. [Common Mistakes and Pitfalls](#10-common-mistakes-and-pitfalls)
 11. [Server Mode (Cloudflare Containers)](#11-server-mode-cloudflare-containers)
 12. [Worker, Cache & SPA](#12-worker-cache--spa)
-13. [Development Commands](#13-development-commands)
+13. [Tauri Desktop GUI](#13-tauri-desktop-gui)
+14. [Development Commands](#14-development-commands)
 
 ---
 
@@ -45,6 +46,7 @@ executing the content.
 | Drag-and-drop (multi) | `vrcstorage-scanner <FILE1> <FILE2> …` | Multiple files dropped at once |
 | Drag-and-drop (folder) | `vrcstorage-scanner <FOLDER>` | Recursive scan of a directory |
 | HTTP server | `vrcstorage-scanner serve --port 8080` | Cloudflare Containers (R2 download) |
+| Desktop GUI | `npm run tauri dev` / `npm run tauri build` (in `tauri/`) | Native desktop app for non-technical users |
 
 **Server endpoints:** `POST /api/upload`, `POST /api/upload/start`, `PUT /api/upload/part`, `POST /api/upload/end`, `POST /api/upload/abort`, `GET /api/download/:hash`, `POST /api/scan`, `POST /api/sanitize`, `POST /api/scan-batch`, `GET /api/health`, `GET /api/cache-stats`, `GET /api/history`, `GET /api/history/:sha256`, `GET /api/search?q=`, `GET /api/stats`, `GET /file/:sha256`.
 Worker applies a **two-level cache** on `/api/scan`: KV (24 h, edge-local) checked first, then D1
@@ -101,13 +103,51 @@ authentication is implicit via the opaque `upload_id` — only a client with a v
 ## 2. Repository Structure
 
 ```
-vrcstorage-scanner/
-├── Cargo.toml                  ← crate dependencies and configuration
+vrcstorage-scanner/          ← Cargo workspace root (members: "." + "tauri/src-tauri")
+├── Cargo.toml                  ← workspace + library crate configuration
 ├── Cargo.lock
 ├── AGENTS.md                   ← this file
 ├── README.md                   ← user-facing documentation
 ├── CONFIG.md                   ← non-technical guide to tuning src/config.rs
-├── vrcstorage-scanner-workflow.md  ← design specification (source of truth)
+│
+├── tauri/                      ← Desktop GUI application (Tauri v2 + Vanilla TS + Vite)
+│   ├── index.html              ← SPA shell (view panels: scan, history, settings)
+│   ├── package.json            ← Node deps: @tauri-apps/* v2, lucide, tailwindcss v4, vite
+│   ├── vite.config.ts          ← Vite + @tailwindcss/vite bundler config
+│   ├── tsconfig.json
+│   ├── src/                    ← Vanilla TypeScript frontend (no framework)
+│   │   ├── main.ts             ← Entry point: mounts sidebar, bootstraps router + views
+│   │   ├── router.ts           ← SPA panel router (scan | history | settings)
+│   │   ├── store.ts            ← Reactive AppStore (EventTarget-based, module-level state)
+│   │   ├── types.ts            ← TypeScript mirrors of all Rust IPC structs
+│   │   ├── tauri.ts            ← Typed invoke() wrappers for every backend command
+│   │   ├── icons.ts            ← Asset-type → Lucide icon / color mapping
+│   │   ├── app.css             ← Global styles (Tailwind CSS v4 + custom tokens)
+│   │   ├── components/
+│   │   │   ├── drop-zone.ts    ← Drag-and-drop target + file-browse button (Ctrl+O)
+│   │   │   ├── findings-list.ts← Findings table with severity filter chips
+│   │   │   ├── results-card.ts ← Per-file scan result card (risk badge, stats, action tabs)
+│   │   │   ├── sanitize-panel.ts← Sanitize options form + result summary
+│   │   │   ├── sidebar.ts      ← Navigation sidebar (nav links + keyboard shortcuts)
+│   │   │   └── tree-viewer.ts  ← Recursive file-tree renderer with collapsible nodes
+│   │   └── views/
+│   │       ├── scan.ts         ← Main scan view: drop-zone, progress, results, tree/sanitize/export tabs
+│   │       ├── history.ts      ← History view: list + detail panel per entry
+│   │       └── settings.ts     ← Settings view: form backed by tauri-plugin-store
+│   └── src-tauri/              ← Tauri Rust backend (crate: vrcstorage-scanner-gui)
+│       ├── tauri.conf.json     ← App identity, window config (1200×660, min 900×600)
+│       ├── build.rs
+│       ├── capabilities/       ← Tauri v2 permission scopes (dialog, fs, shell, store, opener)
+│       └── src/
+│           ├── main.rs         ← Binary entry point
+│           ├── lib.rs          ← Plugin registration + invoke_handler
+│           ├── state.rs        ← AppState (Tauri managed state)
+│           └── commands/
+│               ├── mod.rs
+│               ├── scan.rs     ← scan_file (Channel streaming), collect_packages, save_report, generate_txt_report
+│               ├── sanitize.rs ← sanitize_file → SanitizeResult
+│               ├── export.rs   ← export_file → ExportResult
+│               └── tree.rs     ← get_tree → SerTreeNode, export_tree → String
 │
 ├── src/
 │   ├── lib.rs                  ← re-exports all modules (used by tests and integrations)
@@ -2019,7 +2059,91 @@ Omitting these fields causes the history to show the SHA-256 hash as the filenam
 
 ---
 
-## 13. Development Commands
+## 13. Tauri Desktop GUI
+
+The `tauri/` directory contains the optional native desktop application. It is a **Cargo workspace member** (`tauri/src-tauri`) that depends on the core library crate via `path = "../.."`.
+
+### Cargo workspace
+
+```toml
+# Cargo.toml (root)
+[workspace]
+members = [".", "tauri/src-tauri"]
+resolver = "2"
+```
+
+- `.` → `vrcstorage-scanner` — CLI binary + `vrcstorage_scanner` library
+- `tauri/src-tauri` → `vrcstorage-scanner-gui` — Tauri binary (crate-type: `staticlib cdylib rlib`)
+
+> **Critical:** Any `cargo build` or `cargo test` at the workspace root compiles both members. The `--package` flag can target a single member.
+
+### IPC command reference
+
+All commands are registered in `tauri/src-tauri/src/lib.rs` via `tauri::generate_handler![]` and exposed to the frontend through typed wrappers in `tauri/src/tauri.ts`.
+
+| Rust command | Frontend wrapper | Description |
+|---|---|---|
+| `scan_file` | `scanFile()` | Scan a single file; streams `ScanProgress` events via `Channel<ScanProgress>` |
+| `collect_packages` | `collectPackages()` | Resolve dropped paths (files/folders) → flat deduplicated list of `.unitypackage` paths |
+| `save_report` | `saveReport()` | Write TXT/JSON report string to a disk path |
+| `generate_txt_report` | `generateTxtReport()` | Render a `ScanReport` struct as plain text via `txt_reporter::render_single_txt` |
+| `sanitize_file` | `sanitizeFile()` | Sanitize a package; returns `SanitizeResult` (counts + output path) |
+| `export_file` | `exportFile()` | Extract package to folder or ZIP; returns `ExportResult` |
+| `get_tree` | `getTree()` | Parse package tree → `SerTreeNode` hierarchy (runs `tree::run_tree` with JSON format internally) |
+| `export_tree` | `exportTree()` | Render tree as TXT / JSON / XML string for save-file dialog |
+
+### Frontend architecture rules
+
+- **No frontend framework** — the frontend is plain Vanilla TypeScript + DOM APIs. Do **not** introduce React, Svelte, Vue, or similar.
+- **State management** — all mutable UI state lives in `store.ts` (`AppStore extends EventTarget`). Components subscribe with `store.on(key, handler)` and mutate state only through `store.set*()` helpers.
+- **Routing** — `router.ts` manages which view panel is visible (`scan | history | settings`). Use `showView(id)` to navigate; never toggle `.hidden` classes directly.
+- **IPC calls** — always import from `tauri.ts` typed wrappers, never call `invoke()` directly in view/component files.
+- **Icons** — asset-type icon/color mappings live exclusively in `icons.ts`. Add new types there.
+- **Styling** — Tailwind CSS v4 (via `@tailwindcss/vite`). Custom tokens go in `app.css`. Do not use inline styles for design system values.
+
+### Tauri plugins used
+
+| Plugin | Rust crate | NPM package | Purpose |
+|---|---|---|---|
+| `dialog` | `tauri-plugin-dialog` | `@tauri-apps/plugin-dialog` | Open/save file dialogs |
+| `fs` | `tauri-plugin-fs` | `@tauri-apps/plugin-fs` | `exists()` filesystem check |
+| `shell` | `tauri-plugin-shell` | `@tauri-apps/plugin-shell` | Open paths in native explorer |
+| `store` | `tauri-plugin-store` | `@tauri-apps/plugin-store` | Persistent settings + history (JSON file) |
+| `opener` | `tauri-plugin-opener` | `@tauri-apps/plugin-opener` | Open URLs in default browser |
+
+### Building the GUI
+
+```bash
+cd tauri
+npm install
+
+# Development — hot-reload frontend + auto Rust recompile
+npm run tauri dev
+
+# Production — creates platform-specific installers
+npm run tauri build
+# Output: tauri/src-tauri/target/release/bundle/
+#   Windows: nsis/*.exe, msi/*.msi
+#   Linux:   appimage/*.AppImage, deb/*.deb, rpm/*.rpm
+#   macOS:   macos/*.app, dmg/*.dmg
+```
+
+### CI/CD — release workflow
+
+The `.github/workflows/release.yml` runs **two parallel build jobs** on every `v*.*.*` tag push:
+
+| Job | Platforms | Output artifacts |
+|---|---|---|
+| `build` | `windows-latest`, `ubuntu-latest` | CLI binaries (`vrcstorage-scanner-{windows,linux}-x86_64[.exe]`) + `.sha256` checksums |
+| `build-gui` | `windows-latest`, `ubuntu-22.04` | GUI installers prefixed with `gui-` (NSIS `.exe`, MSI, AppImage, `.deb`, `.rpm`) |
+
+Both jobs feed into the `release` job which creates the GitHub Release with auto-generated notes.
+
+> **Rule:** CLI artifacts and GUI installers are **never mixed**. CLI binaries come from `cargo build --release --target <triple>` at the workspace root. GUI installers come from `npm run tauri build` inside `tauri/`.
+
+---
+
+## 14. Development Commands
 
 ```bash
 # Build (debug)
@@ -2136,4 +2260,24 @@ npx wrangler kv namespace create RESULT_CACHE
 
 # Deploy full stack (Worker + Container + SPA)
 npx wrangler deploy
+
+# ── Tauri GUI ────────────────────────────────────────────────────────────────
+
+# Install frontend dependencies (first time or after package.json changes)
+cd tauri && npm install
+
+# Start GUI in development mode (hot-reload Vite + auto Rust recompile)
+cd tauri && npm run tauri dev
+
+# Build production GUI installers (output: tauri/src-tauri/target/release/bundle/)
+cd tauri && npm run tauri build
+
+# Type-check frontend TypeScript only (no Rust compile)
+cd tauri && npx tsc --noEmit
+
+# Build only the Rust GUI backend (no frontend, useful for quick Rust iteration)
+cargo build -p vrcstorage-scanner-gui
+
+# Build only the CLI/library (excludes the GUI crate)
+cargo build -p vrcstorage-scanner
 ```
