@@ -1,6 +1,6 @@
 {
   "name": "vrcstorage-scanner-gui",
-  "version": "0.9.1",
+  "version": "0.9.0",
   "description": "vrcstorage-scanner Desktop GUI",
   "type": "module",
   "scripts": {
