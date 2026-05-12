@@ -202,11 +202,11 @@ jobs:
 
             | File | Platform | Format |
             |---|---|---|
-            | `vrcstorage-scanner_*_x64-setup.exe` | Windows 10/11 | NSIS Installer ✅ Recommended |
-            | `vrcstorage-scanner_*_x64_en-US.msi` | Windows 10/11 | MSI Installer |
-            | `vrcstorage-scanner_*_amd64.AppImage` | Linux x86_64 | AppImage (universal) |
-            | `vrcstorage-scanner_*_amd64.deb` | Ubuntu / Debian | DEB Package |
-            | `vrcstorage-scanner-*_x86_64.rpm` | Fedora / RHEL | RPM Package |
+            | `gui-vrcstorage-scanner_*_x64-setup.exe` | Windows 10/11 | NSIS Installer ✅ Recommended |
+            | `gui-vrcstorage-scanner_*_x64_en-US.msi` | Windows 10/11 | MSI Installer |
+            | `gui-vrcstorage-scanner_*_amd64.AppImage` | Linux x86_64 | AppImage (universal) |
+            | `gui-vrcstorage-scanner_*_amd64.deb` | Ubuntu / Debian | DEB Package |
+            | `gui-vrcstorage-scanner_*_x86_64.rpm` | Fedora / RHEL | RPM Package |
 
             ---
 
