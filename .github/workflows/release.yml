@@ -144,6 +144,44 @@ jobs:
           for f in target/release/bundle/rpm/*.rpm; do
             mv "$f" "$(dirname $f)/gui-$(basename $f)"
           done
+      - name: Fix AppImage launcher permissions
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          appimage_dir="target/release/bundle/appimage"
+          appimagetool="$RUNNER_TEMP/appimagetool-x86_64.AppImage"
+          curl -fsSL \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage \
+            -o "$appimagetool"
+          chmod +x "$appimagetool"
+
+          shopt -s nullglob
+          for image in "$appimage_dir"/gui-*.AppImage; do
+            workdir="$(mktemp -d)"
+            image_path="$GITHUB_WORKSPACE/$image"
+
+            (cd "$workdir" && "$image_path" --appimage-extract >/dev/null)
+            appdir="$workdir/squashfs-root"
+
+            # Tauri 2.11.x writes AppRun.wrapped as mode 0770. Firejail runs
+            # the AppImage as an unprivileged user and cannot execute it unless
+            # the file also has the world-execute bit.
+            chmod 0755 "$appdir/AppRun.wrapped"
+
+            fixed_image="$workdir/fixed.AppImage"
+            APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 \
+              "$appimagetool" "$appdir" "$fixed_image"
+            chmod +x "$fixed_image"
+
+            verify_dir="$(mktemp -d)"
+            (cd "$verify_dir" && "$fixed_image" --appimage-extract >/dev/null)
+            test "$(stat -c '%a' "$verify_dir/squashfs-root/AppRun.wrapped")" = "755"
+
+            mv "$fixed_image" "$image_path"
+            rm -rf "$verify_dir" "$workdir"
+          done
+
 
       - name: Upload Linux GUI artifact
         if: runner.os == 'Linux'
