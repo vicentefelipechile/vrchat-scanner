@@ -164,6 +164,8 @@ jobs:
             (cd "$workdir" && "$image_path" --appimage-extract >/dev/null)
             appdir="$workdir/squashfs-root"
 
+            # Firejail must be able to traverse root-owned AppDir directories.
+            find "$appdir" -type d -exec chmod 0755 {} +
             # Tauri 2.11.x writes AppRun.wrapped as mode 0770. Firejail runs
             # the AppImage as an unprivileged user and cannot execute it unless
             # the file also has the world-execute bit.
@@ -177,6 +179,10 @@ jobs:
             verify_dir="$(mktemp -d)"
             (cd "$verify_dir" && "$fixed_image" --appimage-extract >/dev/null)
             test "$(stat -c '%a' "$verify_dir/squashfs-root/AppRun.wrapped")" = "755"
+            if find "$verify_dir/squashfs-root" -type d ! -perm 0755 -print -quit | grep -q .; then
+              echo "AppImage contains a directory without mode 0755"
+              exit 1
+            fi
 
             mv "$fixed_image" "$image_path"
             rm -rf "$verify_dir" "$workdir"
