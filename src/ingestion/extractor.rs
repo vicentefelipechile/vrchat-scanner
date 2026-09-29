@@ -92,9 +92,9 @@ fn extract_unity_package(data: &[u8]) -> crate::utils::Result<PackageTree> {
     // .unitypackage is a gzip-compressed TAR
     // Try gzip first, then plain TAR
     let decompressed: Vec<u8>;
-    let tar_data: &[u8];
+    let tar_data: &[u8] = if data.starts_with(&[0x1f, 0x8b]) {
 
-    if data.starts_with(&[0x1f, 0x8b]) {
+    
         use flate2::read::GzDecoder;
         let mut decoder = GzDecoder::new(Cursor::new(data));
         let mut buf = Vec::new();
@@ -102,10 +102,10 @@ fn extract_unity_package(data: &[u8]) -> crate::utils::Result<PackageTree> {
             crate::utils::ScannerError::ExtractionError(format!("gzip decompress: {e}"))
         })?;
         decompressed = buf;
-        tar_data = &decompressed;
+        &decompressed
     } else {
-        tar_data = data;
-    }
+        data
+    };
 
     let mut archive = tar::Archive::new(Cursor::new(tar_data));
 

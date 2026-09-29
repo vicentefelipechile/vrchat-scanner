@@ -19,19 +19,19 @@ pub fn rebuild_unitypackage(
 ) -> crate::utils::Result<Vec<u8>> {
     // ── Step 1: decompress gzip if needed ──────────────────────────────────
     let decompressed: Vec<u8>;
-    let tar_data: &[u8];
+    let tar_data: &[u8] = if original_data.starts_with(&[0x1f, 0x8b]) {
 
-    if original_data.starts_with(&[0x1f, 0x8b]) {
+    
         let mut decoder = GzDecoder::new(Cursor::new(original_data));
         let mut buf = Vec::new();
         decoder.read_to_end(&mut buf).map_err(|e| {
             crate::utils::ScannerError::ExtractionError(format!("gzip decompress: {e}"))
         })?;
         decompressed = buf;
-        tar_data = &decompressed;
+        &decompressed
     } else {
-        tar_data = original_data;
-    }
+        original_data
+    };
 
     // ── Step 2: iterate TAR, filter and/or patch entries ───────────────────
     let mut archive = Archive::new(Cursor::new(tar_data));

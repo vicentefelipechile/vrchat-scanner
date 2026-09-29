@@ -305,7 +305,7 @@ fn write_json_node(node: &TreeNode, output: &mut String, indent: usize) {
                 output.push('\n');
             }
         }
-        output.push_str(&format!("{}]\n", &"  ".repeat(indent + 1)));
+        output.push_str(&format!("{}]\n", "  ".repeat(indent + 1)));
     }
 
     output.push_str(&format!("{}}}", pad));
