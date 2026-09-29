@@ -97,7 +97,7 @@ pub fn print_report(report: &ScanReport, level: RiskLevel, verbose: bool, caps: 
     println!("{}", thin.dimmed());
     println!("{:14} {}", "Total score:".bold(), report.risk.score);
     println!("{:14} {}", "Risk level:".bold(),  level_colored(level));
-    println!("{:14} {}", "Action:".bold(),       &report.risk.recommendation);
+    println!("{:14} {}", "Action:".bold(),       report.risk.recommendation);
     println!("{:14} {}", "Duration:".bold(),     format_duration(report.scan_duration_ms));
     println!("{}", thin.dimmed());
 
